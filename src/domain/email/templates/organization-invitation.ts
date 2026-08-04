@@ -31,7 +31,7 @@ export function renderOrganizationInvitationEmail(input: OrganizationInvitationT
   const inviterName = truncateInterpolatedName(input.inviterName);
   const expiresAtText = input.expiresAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
 
-  const subject = sanitizeEmailSubject(`${orgName}에서 ClauseBase 초대를 보냈습니다`);
+  const subject = sanitizeEmailSubject(`${orgName}에서 Senecial 초대를 보냈습니다`);
 
   const bodyHtml = `
     <p>안녕하세요,</p>

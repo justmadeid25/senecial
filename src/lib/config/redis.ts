@@ -28,7 +28,7 @@ function parsePositiveInt(raw: string | undefined, fallback: number, varName: st
 export function loadRedisConfig(env: NodeJS.ProcessEnv = process.env): Partial<RedisConfig> {
   return {
     url: env.REDIS_URL || undefined,
-    keyPrefix: env.REDIS_KEY_PREFIX || "clausebase",
+    keyPrefix: env.REDIS_KEY_PREFIX || "senecial",
     connectTimeoutMs: parsePositiveInt(env.REDIS_CONNECT_TIMEOUT_MS, 3000, "REDIS_CONNECT_TIMEOUT_MS"),
     commandTimeoutMs: parsePositiveInt(env.REDIS_COMMAND_TIMEOUT_MS, 2000, "REDIS_COMMAND_TIMEOUT_MS"),
   };

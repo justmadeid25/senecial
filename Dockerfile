@@ -1,4 +1,4 @@
-# ClauseBase - production Dockerfile (Phase 9 §37, Phase 11 runtime fixes)
+# Senecial - production Dockerfile (Phase 9 §37, Phase 11 runtime fixes)
 #
 # Multi-stage build producing a minimal runtime image via Next.js
 # `output: "standalone"` (next.config.ts). Verified in this repository (no

@@ -22,7 +22,7 @@ export const PROMPT_TEMPLATE_VERSION = "v1";
  */
 export function buildSystemPrompt(): string {
   return [
-    "당신은 ClauseBase의 계약 분석 보조 AI입니다.",
+    "당신은 Senecial의 계약 분석 보조 AI입니다.",
     "",
     "절대 규칙:",
     "1. 당신은 계약 내용을 절대 수정하지 않습니다. 오직 추천, 설명, 검색, 근거 제공만 수행합니다.",

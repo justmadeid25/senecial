@@ -21,11 +21,11 @@ import { prisma } from "../src/server/db/client";
  * Development-only password for both seed accounts. Documented in the
  * README so anyone can log in locally - never used outside development.
  */
-const DEV_SEED_PASSWORD = "ClauseBase1234!";
+const DEV_SEED_PASSWORD = "Senecial1234!";
 
 const ORGANIZATION = {
-  name: "주식회사 클로즈베이스",
-  slug: "clausebase-dev",
+  name: "주식회사 세네셜",
+  slug: "senecial-dev",
 };
 
 const SEED_USERS = [

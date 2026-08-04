@@ -17,13 +17,13 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" https://internal-host/api/metrics
 
 | 지표 | 종류 | 설명 |
 |---|---|---|
-| `clausebase_http_requests_total{route,status}` | counter | 계측된 Route Handler별 요청 수 |
-| `clausebase_http_request_duration_{count,sum_ms,max_ms}{route}` | summary | 계측된 Route Handler의 처리 시간 |
-| `clausebase_dependency_duration_{count,sum_ms,max_ms}{dependency}` | summary | DB/Redis/S3/Mail 호출 시간 (`dependency`: db/redis/s3/mail) |
-| `clausebase_batch_job_duration_{count,sum_ms,max_ms}{job_name}` | summary | 배치 작업 실행 시간 |
-| `clausebase_startup_duration_ms` | gauge | 프로세스 시작~startup 검증 완료까지 걸린 시간 |
+| `senecial_http_requests_total{route,status}` | counter | 계측된 Route Handler별 요청 수 |
+| `senecial_http_request_duration_{count,sum_ms,max_ms}{route}` | summary | 계측된 Route Handler의 처리 시간 |
+| `senecial_dependency_duration_{count,sum_ms,max_ms}{dependency}` | summary | DB/Redis/S3/Mail 호출 시간 (`dependency`: db/redis/s3/mail) |
+| `senecial_batch_job_duration_{count,sum_ms,max_ms}{job_name}` | summary | 배치 작업 실행 시간 |
+| `senecial_startup_duration_ms` | gauge | 프로세스 시작~startup 검증 완료까지 걸린 시간 |
 
-**계측 범위의 한계 (정직하게 명시)**: Next.js App Router는 미들웨어가 다운스트림 Route Handler/React Server Component 렌더링 전체를 감싸는 전통적인 "around" 미들웨어 구조가 아닙니다 — `middleware.ts`는 라우팅 훅일 뿐, 요청 처리 전체 시간을 측정할 수 있는 지점이 아닙니다. 따라서 `clausebase_http_request_duration`은 이 앱이 실제로 소유하고 있는 소수의 진짜 Route Handler(`/api/health/live`, `/api/health/ready`, `/api/metrics`, `/api/contracts/[contractId]/files/[fileId]`, `/api/analytics/export/[type]`)에만 적용됩니다 — 페이지(Server Component) 렌더링이나 Server Action 전체의 종단 간 지연시간은 이 지표에 포함되지 않습니다. 반면 DB/Redis/S3/Mail 의존성 지표는 각각의 단일 choke point(Prisma `query` 이벤트, `RedisRateLimiter.consume()`, `S3CompatibleStorageDriver`의 각 메서드, `sendTrackedMail()`)에서 계측되므로 이 앱이 만드는 모든 실제 호출을 빠짐없이 포함합니다.
+**계측 범위의 한계 (정직하게 명시)**: Next.js App Router는 미들웨어가 다운스트림 Route Handler/React Server Component 렌더링 전체를 감싸는 전통적인 "around" 미들웨어 구조가 아닙니다 — `middleware.ts`는 라우팅 훅일 뿐, 요청 처리 전체 시간을 측정할 수 있는 지점이 아닙니다. 따라서 `senecial_http_request_duration`은 이 앱이 실제로 소유하고 있는 소수의 진짜 Route Handler(`/api/health/live`, `/api/health/ready`, `/api/metrics`, `/api/contracts/[contractId]/files/[fileId]`, `/api/analytics/export/[type]`)에만 적용됩니다 — 페이지(Server Component) 렌더링이나 Server Action 전체의 종단 간 지연시간은 이 지표에 포함되지 않습니다. 반면 DB/Redis/S3/Mail 의존성 지표는 각각의 단일 choke point(Prisma `query` 이벤트, `RedisRateLimiter.consume()`, `S3CompatibleStorageDriver`의 각 메서드, `sendTrackedMail()`)에서 계측되므로 이 앱이 만드는 모든 실제 호출을 빠짐없이 포함합니다.
 
 ### Slow request 로깅
 

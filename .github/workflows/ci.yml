@@ -21,7 +21,7 @@ env:
   # matches docker-compose.yml's own "development-only-password" convention.
   # Never a real credential; safe to hardcode in a public workflow file.
   PGPASSWORD: development-only-password
-  DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+  DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_test?schema=public
   AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
   AUTH_URL: http://localhost:3000
   APP_URL: http://localhost:3000
@@ -40,12 +40,12 @@ jobs:
         # version as before, just with the extension available.
         image: pgvector/pgvector:pg18
         env:
-          POSTGRES_DB: clausebase_test
-          POSTGRES_USER: clausebase
+          POSTGRES_DB: senecial_test
+          POSTGRES_USER: senecial
           POSTGRES_PASSWORD: development-only-password
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-cmd "pg_isready -U senecial -d senecial_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -109,17 +109,17 @@ jobs:
         # version as before, just with the extension available.
         image: pgvector/pgvector:pg18
         env:
-          POSTGRES_DB: clausebase_migration_check
-          POSTGRES_USER: clausebase
+          POSTGRES_DB: senecial_migration_check
+          POSTGRES_USER: senecial
           POSTGRES_PASSWORD: development-only-password
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U clausebase -d clausebase_migration_check"
+          --health-cmd "pg_isready -U senecial -d senecial_migration_check"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_migration_check?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_migration_check?schema=public
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -165,7 +165,7 @@ jobs:
         with:
           context: .
           push: false
-          tags: clausebase:ci-${{ github.sha }}
+          tags: senecial:ci-${{ github.sha }}
           build-args: |
             GIT_COMMIT_SHA=${{ github.sha }}
           cache-from: type=gha
@@ -228,12 +228,12 @@ jobs:
         # version as before, just with the extension available.
         image: pgvector/pgvector:pg18
         env:
-          POSTGRES_DB: clausebase_test
-          POSTGRES_USER: clausebase
+          POSTGRES_DB: senecial_test
+          POSTGRES_USER: senecial
           POSTGRES_PASSWORD: development-only-password
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-cmd "pg_isready -U senecial -d senecial_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -248,7 +248,7 @@ jobs:
       minio:
         image: minio/minio:latest
         env:
-          MINIO_ROOT_USER: clausebase
+          MINIO_ROOT_USER: senecial
           MINIO_ROOT_PASSWORD: development-only-password
         ports: ["9000:9000"]
         options: >-
@@ -262,7 +262,7 @@ jobs:
         # "local" for the E2E run below (S3-mode E2E is exercised via
         # tests/integration/s3-storage-real.test.ts's opt-in path instead).
     env:
-      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_test?schema=public
       AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
       FILE_STORAGE_DRIVER: local
       RATE_LIMITER: redis
@@ -322,12 +322,12 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg18
         env:
-          POSTGRES_DB: clausebase_e2e
-          POSTGRES_USER: clausebase
+          POSTGRES_DB: senecial_e2e
+          POSTGRES_USER: senecial
           POSTGRES_PASSWORD: development-only-password
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U clausebase -d clausebase_e2e"
+          --health-cmd "pg_isready -U senecial -d senecial_e2e"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -340,7 +340,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_e2e?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_e2e?schema=public
       AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
       REDIS_URL: redis://localhost:6379
       FILE_STORAGE_DRIVER: local
@@ -385,17 +385,17 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg18
         env:
-          POSTGRES_DB: clausebase_test
-          POSTGRES_USER: clausebase
+          POSTGRES_DB: senecial_test
+          POSTGRES_USER: senecial
           POSTGRES_PASSWORD: development-only-password
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-cmd "pg_isready -U senecial -d senecial_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_test?schema=public
       AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
     steps:
       - uses: actions/checkout@v4
@@ -443,12 +443,12 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg18
         env:
-          POSTGRES_DB: clausebase_test
-          POSTGRES_USER: clausebase
+          POSTGRES_DB: senecial_test
+          POSTGRES_USER: senecial
           POSTGRES_PASSWORD: development-only-password
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-cmd "pg_isready -U senecial -d senecial_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -461,7 +461,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_e2e?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_e2e?schema=public
       AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
       AUTH_URL: http://localhost:3000
       APP_URL: http://localhost:3000
@@ -516,7 +516,7 @@ jobs:
   # GitHub-hosted service containers, identical to the jobs above. Real
   # Postmark/S3 tests stay opt-in/skipped here (see nightly-real-infra.yml).
   #
-  # One database (clausebase_e2e) for the whole job, not one-per-step -
+  # One database (senecial_e2e) for the whole job, not one-per-step -
   # release:verify's steps run strictly sequentially (never concurrently),
   # so sharing is safe: each step that needs a clean slate (vitest, the
   # E2E run) already resets/truncates its own tables before using it. This
@@ -531,12 +531,12 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg18
         env:
-          POSTGRES_DB: clausebase_e2e
-          POSTGRES_USER: clausebase
+          POSTGRES_DB: senecial_e2e
+          POSTGRES_USER: senecial
           POSTGRES_PASSWORD: development-only-password
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U clausebase -d clausebase_e2e"
+          --health-cmd "pg_isready -U senecial -d senecial_e2e"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -549,7 +549,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_e2e?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_e2e?schema=public
       AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
       AUTH_URL: http://localhost:3000
       APP_URL: http://localhost:3000

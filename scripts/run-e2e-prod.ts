@@ -199,7 +199,7 @@ async function main(): Promise<void> {
     // key prefix per run - never shares keys with dev/other E2E runs.
     RATE_LIMITER: process.env.RATE_LIMITER ?? "redis",
     REDIS_URL: process.env.REDIS_URL ?? "redis://localhost:6379",
-    REDIS_KEY_PREFIX: `clausebase-e2e-prod-${runId}`,
+    REDIS_KEY_PREFIX: `senecial-e2e-prod-${runId}`,
     AI_CACHE_PROVIDER: process.env.AI_CACHE_PROVIDER ?? "redis",
   };
 

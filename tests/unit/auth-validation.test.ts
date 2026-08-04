@@ -16,7 +16,7 @@ describe("emailSchema", () => {
 describe("signupSchema", () => {
   const validInput = {
     name: "홍길동",
-    companyName: "클로즈베이스",
+    companyName: "세네셜",
     email: "user@example.com",
     password: "Password123",
     confirmPassword: "Password123",

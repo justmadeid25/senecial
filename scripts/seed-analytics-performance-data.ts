@@ -35,9 +35,9 @@ const SIGNAL_TOTAL = Number(process.env.ANALYTICS_PERF_SIGNALS ?? 10000);
 const CLAUSE_CONTRACT_COUNT = Math.min(CONTRACT_COUNT, 500);
 const CLAUSES_PER_CONTRACT = Math.max(1, Math.round(CLAUSE_TOTAL / CLAUSE_CONTRACT_COUNT));
 
-const ORGANIZATION = { name: "분석 성능 테스트 조직", slug: "clausebase-analytics-perf" };
+const ORGANIZATION = { name: "분석 성능 테스트 조직", slug: "senecial-analytics-perf" };
 const OWNER_EMAIL = "perf-owner@example.com";
-const DEV_PASSWORD = "ClauseBase1234!";
+const DEV_PASSWORD = "Senecial1234!";
 
 const CONTRACT_TYPES = Object.values(ContractType);
 const CLAUSE_TYPES = Object.values(ClauseType);

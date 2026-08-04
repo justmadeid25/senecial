@@ -4,7 +4,7 @@ import type { RedisConfig } from "@/lib/config/redis";
 import { getLogger } from "@/server/logging";
 
 declare global {
-  var __clausebaseAiCacheRedisClient: RedisClient | undefined;
+  var __senecialAiCacheRedisClient: RedisClient | undefined;
 }
 
 /**
@@ -17,8 +17,8 @@ declare global {
  * server/db/client.ts, server/services/rate-limit/redis-client.ts).
  */
 export function getAiCacheRedisClient(config: RedisConfig): RedisClient {
-  if (globalThis.__clausebaseAiCacheRedisClient) {
-    return globalThis.__clausebaseAiCacheRedisClient;
+  if (globalThis.__senecialAiCacheRedisClient) {
+    return globalThis.__senecialAiCacheRedisClient;
   }
 
   const client = new Redis(config.url, {
@@ -34,13 +34,13 @@ export function getAiCacheRedisClient(config: RedisConfig): RedisClient {
     getLogger().error("ai_cache.redis_connection_error", { errorCode: error.name });
   });
 
-  globalThis.__clausebaseAiCacheRedisClient = client;
+  globalThis.__senecialAiCacheRedisClient = client;
   return client;
 }
 
 export async function closeAiCacheRedisClient(): Promise<void> {
-  if (globalThis.__clausebaseAiCacheRedisClient) {
-    await globalThis.__clausebaseAiCacheRedisClient.quit().catch(() => undefined);
-    globalThis.__clausebaseAiCacheRedisClient = undefined;
+  if (globalThis.__senecialAiCacheRedisClient) {
+    await globalThis.__senecialAiCacheRedisClient.quit().catch(() => undefined);
+    globalThis.__senecialAiCacheRedisClient = undefined;
   }
 }

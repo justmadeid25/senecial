@@ -5,7 +5,7 @@ import { getLogger } from "../src/server/logging";
 import { runCommand } from "../src/server/backup/run-command";
 import { resolvePackageBinEntry } from "../src/server/process/resolve-package-bin";
 
-const MIGRATE_DEPLOY_LOCK_KEY = "clausebase:deploy-migrate";
+const MIGRATE_DEPLOY_LOCK_KEY = "senecial:deploy-migrate";
 
 /**
  * Phase 11 Part C - the ONLY sanctioned way to apply migrations to a real

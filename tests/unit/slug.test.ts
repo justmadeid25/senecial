@@ -4,7 +4,7 @@ import { generateOrganizationSlugBase } from "@/domain/organizations/slug";
 
 describe("generateOrganizationSlugBase", () => {
   it("falls back to 'org' for a name with no ASCII alphanumerics", () => {
-    expect(generateOrganizationSlugBase("주식회사 클로즈베이스")).toBe("org");
+    expect(generateOrganizationSlugBase("주식회사 세네셜")).toBe("org");
   });
 
   it("slugifies a latin company name", () => {

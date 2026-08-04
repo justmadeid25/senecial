@@ -6,7 +6,7 @@ import { CounterpartyForm } from "@/features/counterparties/components/counterpa
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "상대방 등록 | ClauseBase" };
+export const metadata: Metadata = { title: "상대방 등록 | Senecial" };
 
 export default async function NewCounterpartyPage() {
   try {

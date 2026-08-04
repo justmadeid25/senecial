@@ -20,7 +20,7 @@ export interface EnvironmentCheckResult {
 }
 
 const E2E_TEST_EMAIL_DOMAINS = ["@e2e-test.local", "@smoke-test.local"];
-const E2E_REDIS_KEY_PATTERN = "clausebase-e2e-*";
+const E2E_REDIS_KEY_PATTERN = "senecial-e2e-*";
 
 /** Never logs the URL itself (embeds credentials) - only the database name it targets, matching e2e-db-reset.ts's own convention. */
 function databaseNameOf(databaseUrl: string): string {
@@ -153,7 +153,7 @@ export async function checkRedisPrefixClean(redisUrl: string): Promise<Environme
   }
 }
 
-/** §8 - actively deletes leftover E2E-prefixed keys rather than just reporting them: every E2E Redis key is scoped to a disposable per-run prefix (clausebase-e2e-*), never operator or long-lived data, so cleanup here can safely be destructive. */
+/** §8 - actively deletes leftover E2E-prefixed keys rather than just reporting them: every E2E Redis key is scoped to a disposable per-run prefix (senecial-e2e-*), never operator or long-lived data, so cleanup here can safely be destructive. */
 export async function cleanupRedisPrefix(redisUrl: string): Promise<number> {
   const client = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1, connectTimeout: 3000 });
   let deleted = 0;

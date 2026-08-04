@@ -12,7 +12,7 @@ import { requireOrganizationMembership } from "@/lib/permissions";
 import { prisma } from "@/server/db/client";
 
 export const metadata: Metadata = {
-  title: "대시보드 | ClauseBase",
+  title: "대시보드 | Senecial",
 };
 
 const ROLE_LABEL: Record<string, string> = {

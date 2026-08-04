@@ -13,7 +13,7 @@ import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { formatDateTimeKst } from "@/lib/format/date";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "기준 조항 상세 | ClauseBase" };
+export const metadata: Metadata = { title: "기준 조항 상세 | Senecial" };
 
 export default async function ClauseStandardDetailPage({
   params,

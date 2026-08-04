@@ -16,7 +16,7 @@ import { getContract } from "@/features/contracts/server/get-contract";
 import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "조항 비교 | ClauseBase" };
+export const metadata: Metadata = { title: "조항 비교 | Senecial" };
 
 export default async function ClauseComparePage({
   params,

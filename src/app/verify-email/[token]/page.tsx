@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { verifyEmailAction } from "@/features/account-security/server/verify-email-action";
 
 export const metadata: Metadata = {
-  title: "이메일 인증 | ClauseBase",
+  title: "이메일 인증 | Senecial",
 };
 
 /**

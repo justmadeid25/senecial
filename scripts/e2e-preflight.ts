@@ -42,7 +42,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log("[preflight] ClauseBase E2E 환경 사전 점검 시작...");
+  console.log("[preflight] Senecial E2E 환경 사전 점검 시작...");
 
   const results: EnvironmentCheckResult[] = [];
   results.push(await checkPortFree(port));

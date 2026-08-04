@@ -8,7 +8,7 @@ import { getAiSearchPatternSummary } from "@/features/ai/server/get-ai-search-pa
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "AI 계약 상담 | ClauseBase" };
+export const metadata: Metadata = { title: "AI 계약 상담 | Senecial" };
 
 export default async function AiPage() {
   let authContext;

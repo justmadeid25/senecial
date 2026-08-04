@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ClauseBase",
+  title: "Senecial",
   description: "AI 기반 계약 관리 SaaS",
 };
 

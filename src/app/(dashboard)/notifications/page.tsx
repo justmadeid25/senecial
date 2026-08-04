@@ -9,7 +9,7 @@ import { listNotifications } from "@/features/notifications/server/list-notifica
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "알림 | ClauseBase" };
+export const metadata: Metadata = { title: "알림 | Senecial" };
 
 export default async function NotificationsPage({
   searchParams,

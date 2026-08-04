@@ -20,7 +20,7 @@ import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { formatDateKst } from "@/lib/format/date";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "조직 기준 조항 | ClauseBase" };
+export const metadata: Metadata = { title: "조직 기준 조항 | Senecial" };
 
 export default async function ClauseStandardsPage() {
   let authContext;

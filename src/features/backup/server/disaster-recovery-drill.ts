@@ -39,7 +39,7 @@ export async function runDisasterRecoveryDrill(
   const drillDbName = drillId;
   const drillDatabaseUrl = buildDatabaseUrl(sourceDatabaseUrl, drillDbName);
 
-  const scratchDir = path.join(os.tmpdir(), `clausebase-dr-${randomUUID()}`);
+  const scratchDir = path.join(os.tmpdir(), `senecial-dr-${randomUUID()}`);
   const restoredStorageDir = path.join(scratchDir, "restored-storage");
   await mkdir(scratchDir, { recursive: true });
 

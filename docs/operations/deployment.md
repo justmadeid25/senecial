@@ -25,7 +25,7 @@
    ```
    최신 migration의 `finished_at`이 NULL이 아닌지 확인.
 4. **애플리케이션 배포**
-   - Docker: `docker build -t clausebase:<tag> .` → 새 이미지로 컨테이너 교체 (아래 "Docker 빌드/실행" 참고)
+   - Docker: `docker build -t senecial:<tag> .` → 새 이미지로 컨테이너 교체 (아래 "Docker 빌드/실행" 참고)
    - 배포 플랫폼(예: Vercel 등)을 쓰는 경우 해당 플랫폼의 표준 배포 절차를 따르되, migration은 반드시 애플리케이션 시작 *전에* 별도 단계로 실행
 5. **readiness 확인**
    ```bash
@@ -45,7 +45,7 @@
 ## Docker 빌드/실행
 
 ```bash
-docker build -t clausebase:latest .
+docker build -t senecial:latest .
 docker run -d \
   -p 3000:3000 \
   -e DATABASE_URL="postgresql://..." \
@@ -53,9 +53,9 @@ docker run -d \
   -e APP_URL="https://..." \
   -e AUTH_URL="https://..." \
   -e NODE_ENV=production \
-  -v clausebase_storage:/app/storage \
-  --name clausebase \
-  clausebase:latest
+  -v senecial_storage:/app/storage \
+  --name senecial \
+  senecial:latest
 ```
 
 이 저장소 환경에는 `docker` CLI가 없어 `docker build`를 직접 실행해 검증하지 못했습니다 — `node .next/standalone/server.js`를 직접 실행해 산출물 자체는 정상 동작함을 확인했습니다 (README의 "환경 관련 특이사항" 참고). 실제 배포 전 별도 환경(또는 아래 CI/CD의 `docker.yml`/GitHub-hosted runner)에서 `docker build`/`docker run`을 먼저 검증하십시오.

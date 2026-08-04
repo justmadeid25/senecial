@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { SignupForm } from "@/features/auth/components/signup-form";
 
 export const metadata: Metadata = {
-  title: "회원가입 | ClauseBase",
+  title: "회원가입 | Senecial",
 };
 
 export default function SignupPage() {

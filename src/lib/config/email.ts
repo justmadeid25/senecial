@@ -22,7 +22,7 @@ export function loadEmailConfig(env: NodeJS.ProcessEnv = process.env): Partial<E
   return {
     provider: env.EMAIL_PROVIDER || undefined,
     fromAddress: env.EMAIL_FROM_ADDRESS || undefined,
-    fromName: env.EMAIL_FROM_NAME || "ClauseBase",
+    fromName: env.EMAIL_FROM_NAME || "Senecial",
     replyTo: env.EMAIL_REPLY_TO || undefined,
     supportAddress: env.EMAIL_SUPPORT_ADDRESS || undefined,
     postmarkServerToken: env.POSTMARK_SERVER_TOKEN || undefined,

@@ -1,4 +1,4 @@
-// ClauseBase - Prisma schema
+// Senecial - Prisma schema
 // 향후 마이그레이션 시 이 파일을 기준으로 검토하십시오.
 
 generator client {

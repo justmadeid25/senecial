@@ -57,7 +57,7 @@ export default async function DashboardLayout({
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-6">
             <div>
-              <p className="text-sm font-semibold text-foreground">ClauseBase</p>
+              <p className="text-sm font-semibold text-foreground">Senecial</p>
               <p className="text-xs text-muted-foreground">
                 {organization?.name ?? "알 수 없는 조직"}
               </p>

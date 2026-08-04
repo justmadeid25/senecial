@@ -8,7 +8,7 @@ import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { MembershipRole } from "@/generated/prisma/enums";
 import { requireOrganizationRole } from "@/lib/permissions/require-organization-role";
 
-export const metadata: Metadata = { title: "기준 조항 수정 | ClauseBase" };
+export const metadata: Metadata = { title: "기준 조항 수정 | Senecial" };
 
 export default async function EditClauseStandardPage({
   params,

@@ -11,7 +11,7 @@ export interface RedisWithRateLimitCommands extends RedisClient {
 }
 
 declare global {
-  var __clausebaseRedisRateLimitClient: RedisWithRateLimitCommands | undefined;
+  var __senecialRedisRateLimitClient: RedisWithRateLimitCommands | undefined;
 }
 
 /**
@@ -37,8 +37,8 @@ declare global {
  * until `disconnect()`/`quit()` is called).
  */
 export function getRedisClient(config: RedisConfig): RedisWithRateLimitCommands {
-  if (globalThis.__clausebaseRedisRateLimitClient) {
-    return globalThis.__clausebaseRedisRateLimitClient;
+  if (globalThis.__senecialRedisRateLimitClient) {
+    return globalThis.__senecialRedisRateLimitClient;
   }
 
   const client = new Redis(config.url, {
@@ -58,14 +58,14 @@ export function getRedisClient(config: RedisConfig): RedisWithRateLimitCommands 
     getLogger().error("redis.connection_error", { errorCode: error.name });
   });
 
-  globalThis.__clausebaseRedisRateLimitClient = client;
+  globalThis.__senecialRedisRateLimitClient = client;
   return client;
 }
 
 /** §21 - graceful close for app shutdown (tests' afterAll, a process SIGTERM handler, ...). Safe to call even if no client was ever created. */
 export async function closeRedisClient(): Promise<void> {
-  if (globalThis.__clausebaseRedisRateLimitClient) {
-    await globalThis.__clausebaseRedisRateLimitClient.quit().catch(() => undefined);
-    globalThis.__clausebaseRedisRateLimitClient = undefined;
+  if (globalThis.__senecialRedisRateLimitClient) {
+    await globalThis.__senecialRedisRateLimitClient.quit().catch(() => undefined);
+    globalThis.__senecialRedisRateLimitClient = undefined;
   }
 }

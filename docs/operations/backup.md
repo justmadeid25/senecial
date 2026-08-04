@@ -3,8 +3,8 @@
 ## 정기 백업 (권장: 매일)
 
 ```bash
-pnpm backup:db --output=/var/backups/clausebase --backup-id=$(date +%F)
-pnpm backup:storage --output=/var/backups/clausebase --backup-id=$(date +%F)
+pnpm backup:db --output=/var/backups/senecial --backup-id=$(date +%F)
+pnpm backup:storage --output=/var/backups/senecial --backup-id=$(date +%F)
 ```
 
 두 명령이 같은 `--backup-id`를 쓰면 하나의 manifest 파일(`<backup-id>.manifest.json`)로 병합됩니다. 순서는 상관없습니다(먼저 실행된 쪽이 나중 실행에 의해 덮어써지지 않음).
@@ -42,7 +42,7 @@ PG_DUMP_BIN="/path/to/pg_dump" pnpm backup:db
 `NODE_ENV=production`에서는 `--force` 플래그 또는 `BACKUP_CONFIRM=true` 환경변수 없이는 두 명령 모두 거부됩니다(대화형 프롬프트 없이 자동화에서 안전하게 쓸 수 있도록 — §9).
 
 ```bash
-BACKUP_CONFIRM=true pnpm backup:db --output=/var/backups/clausebase
+BACKUP_CONFIRM=true pnpm backup:db --output=/var/backups/senecial
 ```
 
 ## 확인해야 할 것

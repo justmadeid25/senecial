@@ -10,7 +10,7 @@ import { listMembers } from "@/features/members/server/list-members";
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "구성원 관리 | ClauseBase" };
+export const metadata: Metadata = { title: "구성원 관리 | Senecial" };
 
 export default async function MembersSettingsPage() {
   let authContext;

@@ -9,7 +9,7 @@ import { ContractPagination } from "@/features/contracts/components/contract-pag
 import { ForbiddenError, UnauthorizedError, toSafeErrorMessage } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "감사 로그 | ClauseBase" };
+export const metadata: Metadata = { title: "감사 로그 | Senecial" };
 
 export default async function AuditLogsPage({
   searchParams,

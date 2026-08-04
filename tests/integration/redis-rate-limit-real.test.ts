@@ -27,7 +27,7 @@ describe.skipIf(!hasRedisConfig)("RedisRateLimiter against real Redis (§31)", (
   // its tests, so eagerly calling resolveRedisConfig()/getRedisClient()
   // here would throw ("REDIS_URL이 설정되지 않았습니다.") even when this
   // whole suite is meant to be skipped because TEST_REDIS_URL is unset.
-  const keyPrefix = `clausebase-test-${randomUUID().slice(0, 8)}`;
+  const keyPrefix = `senecial-test-${randomUUID().slice(0, 8)}`;
   let client: RedisWithRateLimitCommands;
   let limiter: RedisRateLimiter;
 

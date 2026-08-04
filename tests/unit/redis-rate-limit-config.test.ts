@@ -11,7 +11,7 @@ describe("loadRedisConfig / resolveRedisConfig (§16)", () => {
   it("loadRedisConfig never throws for a completely empty environment", () => {
     const config = loadRedisConfig(env({}));
     expect(config.url).toBeUndefined();
-    expect(config.keyPrefix).toBe("clausebase");
+    expect(config.keyPrefix).toBe("senecial");
     expect(config.connectTimeoutMs).toBe(3000);
     expect(config.commandTimeoutMs).toBe(2000);
   });

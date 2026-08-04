@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { ResetPasswordForm } from "@/features/account-security/components/reset-password-form";
 
 export const metadata: Metadata = {
-  title: "비밀번호 재설정 | ClauseBase",
+  title: "비밀번호 재설정 | Senecial",
 };
 
 export default async function ResetPasswordPage({

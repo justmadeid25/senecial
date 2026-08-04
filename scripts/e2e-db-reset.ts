@@ -13,8 +13,8 @@ import { Client } from "pg";
  * as a separate step ahead of `playwright test` avoids that circular
  * dependency entirely, regardless of Playwright's internal ordering.
  *
- * Ensures the dedicated `clausebase_e2e` database (never shared with dev
- * `.env` or Vitest's `.env.test` `clausebase_test`) exists, is migrated,
+ * Ensures the dedicated `senecial_e2e` database (never shared with dev
+ * `.env` or Vitest's `.env.test` `senecial_test`) exists, is migrated,
  * and is DETERMINISTICALLY RESET (every app table truncated) before the
  * run starts - so a leftover row from a previous (possibly interrupted)
  * E2E run can never leak into this one. Cheaper than provisioning a brand

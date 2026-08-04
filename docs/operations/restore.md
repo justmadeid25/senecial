@@ -5,8 +5,8 @@
 ## DB 복구
 
 ```bash
-pnpm restore:db --manifest=/var/backups/clausebase/2026-07-30.manifest.json \
-  --target-database-url="postgresql://user:pass@host:5432/clausebase_restore"
+pnpm restore:db --manifest=/var/backups/senecial/2026-07-30.manifest.json \
+  --target-database-url="postgresql://user:pass@host:5432/senecial_restore"
 ```
 
 - 대상 DB에 이미 테이블이 있으면 `--allow-overwrite` 없이는 거부됩니다.
@@ -16,8 +16,8 @@ pnpm restore:db --manifest=/var/backups/clausebase/2026-07-30.manifest.json \
 ## Storage 복구
 
 ```bash
-pnpm restore:storage --manifest=/var/backups/clausebase/2026-07-30.manifest.json \
-  --target-dir=/var/clausebase/storage_restore
+pnpm restore:storage --manifest=/var/backups/senecial/2026-07-30.manifest.json \
+  --target-dir=/var/senecial/storage_restore
 ```
 
 - 대상 디렉터리가 비어있지 않으면 `--allow-overwrite` 없이는 거부됩니다.
@@ -27,9 +27,9 @@ pnpm restore:storage --manifest=/var/backups/clausebase/2026-07-30.manifest.json
 
 ```bash
 pnpm restore:verify \
-  --manifest=/var/backups/clausebase/2026-07-30.manifest.json \
-  --target-database-url="postgresql://user:pass@host:5432/clausebase_restore" \
-  --target-storage-dir=/var/clausebase/storage_restore
+  --manifest=/var/backups/senecial/2026-07-30.manifest.json \
+  --target-database-url="postgresql://user:pass@host:5432/senecial_restore" \
+  --target-storage-dir=/var/senecial/storage_restore
 ```
 
 다음을 모두 확인합니다.

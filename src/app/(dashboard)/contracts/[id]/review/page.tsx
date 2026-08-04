@@ -14,7 +14,7 @@ import { getContract } from "@/features/contracts/server/get-contract";
 import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "계약 검토 | ClauseBase" };
+export const metadata: Metadata = { title: "계약 검토 | Senecial" };
 
 const STATUS_FILTERS: Array<{ value: ClauseReviewSignalStatus | undefined; label: string }> = [
   { value: undefined, label: "전체" },

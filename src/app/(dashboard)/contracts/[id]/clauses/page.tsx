@@ -18,7 +18,7 @@ import { ContractPagination } from "@/features/contracts/components/contract-pag
 import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "계약 조항 | ClauseBase" };
+export const metadata: Metadata = { title: "계약 조항 | Senecial" };
 
 export default async function ContractClausesPage({
   params,

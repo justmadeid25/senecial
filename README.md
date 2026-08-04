@@ -1,6 +1,6 @@
-# ClauseBase
+# Senecial
 
-한국 기업을 위한 AI 기반 계약 관리 SaaS의 초기 MVP입니다. (프로젝트 임시 이름: ClauseBase)
+한국 기업을 위한 AI 기반 계약 관리 SaaS의 초기 MVP입니다. (프로젝트 임시 이름: Senecial)
 
 이 MVP는 화려한 AI 기능보다, 실제 사용 가능한 계약 관리 기본 구조(업로드, 계약 정보 관리, 목록/검색, 만료 관리, 조직별 데이터 분리)를 완성하는 것을 목표로 합니다. AI는 법률적 판단이나 위험도를 확정하지 않으며, 향후 OCR/핵심정보 추출/조항 분해/위험조항 탐지/비식별화 엔진을 연결할 수 있는 확장 가능한 구조만 지금 갖춰 둡니다.
 
@@ -89,8 +89,8 @@ pnpm db:down    # docker compose down
 `docker-compose.yml`은 다음을 실행합니다.
 
 - PostgreSQL 18 (`postgres:18-alpine`)
-- database/user: `clausebase`, password: `development-only-password` — **개발 전용 값입니다. 운영 환경에서 절대 재사용하지 마십시오.**
-- `docker/init-test-db.sql`을 통해 컨테이너 최초 초기화 시 `clausebase_test` 데이터베이스도 함께 생성합니다 (통합 테스트가 개발 DB와 분리된 DB를 사용하도록).
+- database/user: `senecial`, password: `development-only-password` — **개발 전용 값입니다. 운영 환경에서 절대 재사용하지 마십시오.**
+- `docker/init-test-db.sql`을 통해 컨테이너 최초 초기화 시 `senecial_test` 데이터베이스도 함께 생성합니다 (통합 테스트가 개발 DB와 분리된 DB를 사용하도록).
 - healthcheck: `pg_isready`로 컨테이너가 준비될 때까지 대기 후 마이그레이션을 진행하십시오.
 
 > 이 저장소를 검증한 샌드박스 환경에는 Docker가 설치되어 있지 않아, 실제 검증은 관리자 권한 없이 실행 가능한 임시 embedded PostgreSQL로 진행했습니다. `docker-compose.yml`/`docker/init-test-db.sql` 자체는 표준 Docker Compose 문법으로 작성되어 있으며, Docker가 있는 환경에서는 위 명령으로 그대로 동작합니다.
@@ -123,7 +123,7 @@ Client는 `src/generated/prisma`에 생성되며 git에 커밋하지 않습니�
 pnpm db:seed   # prisma db seed
 ```
 
-- `주식회사 클로즈베이스` 조직과 `owner@example.com`(OWNER), `member@example.com`(MEMBER) 계정을 생성합니다.
+- `주식회사 세네셜` 조직과 `owner@example.com`(OWNER), `member@example.com`(MEMBER) 계정을 생성합니다.
 - 상대방 3곳(알파테크 주식회사, 베타솔루션, 감마파트너스)과 계약 8건(DRAFT / 정상 진행중 / 7·30·31일 후 만료 경계 / 이미 만료 / 해지 / 보관 각 1건씩)을 생성해, 대시보드 통계와 목록 필터를 바로 확인할 수 있습니다.
 - 조직 기준 조항(`ClauseStandard`) 6건(계약기간/해지/대금 지급/비밀유지/손해배상 각 1건 활성 + 자동갱신 1건 비활성 예시)을 생성합니다. 모두 이름이 "개발용 내부 참고 조항"으로 시작하고 설명에 "법률적으로 검증된 표준이 아니며 실제 계약에 사용해서는 안 됩니다"를 명시하는 합성(synthetic) 데이터입니다 — 실제 법률 자문이나 검증된 표준이 아닙니다.
 - **(Phase 8)** `SEED-SERVICE-001` 계약에 조항 분해 파이프라인 결과를 워커 큐를 거치지 않고 직접 삽입합니다 — 5개 조항(분류 상태 UNREVIEWED 2건/CONFIRMED 1건/CORRECTED 1건/REJECTED 1건 혼합)과 검토 신호 4건(OPEN/ACKNOWLEDGED/DISMISSED/RESOLVED 각 1건)을 생성해, 워커 CLI를 따로 실행하지 않아도 `/analytics` 화면에서 조항 유형·분류 검토·검토 신호 통계를 바로 확인할 수 있습니다.
@@ -131,7 +131,7 @@ pnpm db:seed   # prisma db seed
 - `NODE_ENV=production`에서는 즉시 에러를 던지고 종료합니다 — 운영 환경에서 seed 계정/데이터가 생성되지 않도록 보호합니다.
 - 비밀번호는 실제로 argon2id 해싱되어 저장되며, 원문은 콘솔에 출력하지 않습니다.
 
-**(Phase 8) 분석 성능 측정용 대량 데이터**: 일반 seed와는 별도의 조직(`clausebase-analytics-perf`)에 대량 합성 데이터를 생성합니다. 실제 회사명·계약·개인정보를 포함하지 않으며, `NODE_ENV=production`에서는 실행을 거부합니다.
+**(Phase 8) 분석 성능 측정용 대량 데이터**: 일반 seed와는 별도의 조직(`senecial-analytics-perf`)에 대량 합성 데이터를 생성합니다. 실제 회사명·계약·개인정보를 포함하지 않으며, `NODE_ENV=production`에서는 실행을 거부합니다.
 
 ```bash
 pnpm analytics:seed-performance   # 기본: 계약 1,000 / 상대방 100 / 조항 50,000 / 검토 신호 10,000
@@ -509,7 +509,7 @@ Phase 6 추출 원문(ContractExtractedDocument.text)
 
 ### 조항 검색 (ILIKE + 선택적 pg_trgm 인덱스)
 
-`/contracts/[id]/clauses?q=`(계약 내)와 `/clauses/search`(조직 전체)에서 조항 제목/번호/본문(`text`)/정규화 텍스트(`normalizedText`)를 검색합니다. 검색 전략으로 ILIKE(Prisma `contains`, 기존 `postgres-contract-search-service.ts`와 동일한 패턴)와 pg_trgm 중 **ILIKE를 항상 정답 경로로 채택**했습니다 — pg_trgm GIN 인덱스(`normalizedText`에 `gin_trgm_ops`)는 마이그레이션에 raw SQL로 추가된 **순수 성능 레이어**일 뿐이며, `schema.prisma`에는 모델링하지 않았습니다(`postgresqlExtensions` preview 기능 미사용). 즉 인덱스/확장 유무와 무관하게 쿼리 코드가 항상 동일하게 정확합니다 — 개발 DB와 테스트 DB(`clausebase_test`) 양쪽에 `CREATE EXTENSION IF NOT EXISTS pg_trgm;`을 직접 실행해 설치 가능함을 확인했습니다. 검색 결과 스니펫(`domain/clauses/search-snippet.ts`)은 서버에서 HTML 문자열을 절대 만들지 않고 `{before, match, after}` 구조체로만 반환하며, 클라이언트 컴포넌트(`ClauseSearchSnippet`)가 `<mark>` 태그로 렌더링합니다. 조항 제목만 일치하고 본문에 일치 구간이 없으면 스니펫은 `null`입니다(하이라이트할 위치가 본문에 없기 때문).
+`/contracts/[id]/clauses?q=`(계약 내)와 `/clauses/search`(조직 전체)에서 조항 제목/번호/본문(`text`)/정규화 텍스트(`normalizedText`)를 검색합니다. 검색 전략으로 ILIKE(Prisma `contains`, 기존 `postgres-contract-search-service.ts`와 동일한 패턴)와 pg_trgm 중 **ILIKE를 항상 정답 경로로 채택**했습니다 — pg_trgm GIN 인덱스(`normalizedText`에 `gin_trgm_ops`)는 마이그레이션에 raw SQL로 추가된 **순수 성능 레이어**일 뿐이며, `schema.prisma`에는 모델링하지 않았습니다(`postgresqlExtensions` preview 기능 미사용). 즉 인덱스/확장 유무와 무관하게 쿼리 코드가 항상 동일하게 정확합니다 — 개발 DB와 테스트 DB(`senecial_test`) 양쪽에 `CREATE EXTENSION IF NOT EXISTS pg_trgm;`을 직접 실행해 설치 가능함을 확인했습니다. 검색 결과 스니펫(`domain/clauses/search-snippet.ts`)은 서버에서 HTML 문자열을 절대 만들지 않고 `{before, match, after}` 구조체로만 반환하며, 클라이언트 컴포넌트(`ClauseSearchSnippet`)가 `<mark>` 태그로 렌더링합니다. 조항 제목만 일치하고 본문에 일치 구간이 없으면 스니펫은 `null`입니다(하이라이트할 위치가 본문에 없기 때문).
 
 ### 조직 기준 조항 (ClauseStandard)
 
@@ -641,7 +641,7 @@ Phase 7에서 도입한 `vitest.config.ts`의 `"default"`(병렬)/`"queue"`(직�
 
 ## 운영 준비: 데이터 보존·백업·보안·배치·관측성 (Phase 9)
 
-이번 Phase는 새로운 계약 분석 기능 없이, ClauseBase를 실제 운영 환경에 배포하기 위한 비기능 요구사항(보존/백업/복구/인증 보안/rate limiting/로깅/health check/배포)을 다룹니다. 더 구체적인 운영 절차는 `docs/operations/`의 runbook을 참고하십시오.
+이번 Phase는 새로운 계약 분석 기능 없이, Senecial를 실제 운영 환경에 배포하기 위한 비기능 요구사항(보존/백업/복구/인증 보안/rate limiting/로깅/health check/배포)을 다룹니다. 더 구체적인 운영 절차는 `docs/operations/`의 runbook을 참고하십시오.
 
 ### 데이터 분류
 
@@ -786,7 +786,7 @@ Phase 9가 정의한 `StorageDriver`/`RateLimiter` 인터페이스에 실제 운
 ### Redis 기반 Rate Limiting (`RedisRateLimiter`)
 
 - `RATE_LIMITER=redis` — 기존 `RATE_LIMITER` 환경변수에 새 값을 추가하는 형태로 구현했습니다(Phase 10A 프롬프트가 제안한 별도의 `RATE_LIMIT_DRIVER` 변수는 도입하지 않음 — 기존 `ALLOW_IN_MEMORY_RATE_LIMITER` 가드/문서와의 일관성을 위해). `ioredis`를 사용했습니다(Redis Lua 스크립트를 `defineCommand()`로 등록해 자동 `EVALSHA` 캐싱을 지원하고, TypeScript 타입 지원이 성숙했기 때문 — `redis`(node-redis) 대비 이 저장소의 요구사항에는 근소하게 더 적합하다고 판단).
-- 설정(`src/lib/config/redis.ts`): `REDIS_URL`(표준 `redis://`/`rediss://` 연결 문자열 — TCP/TLS 모두 지원), `REDIS_KEY_PREFIX`(기본 `clausebase`), `REDIS_CONNECT_TIMEOUT_MS`/`REDIS_COMMAND_TIMEOUT_MS`, `RATE_LIMIT_FAIL_MODE`(`closed`(기본)/`open`).
+- 설정(`src/lib/config/redis.ts`): `REDIS_URL`(표준 `redis://`/`rediss://` 연결 문자열 — TCP/TLS 모두 지원), `REDIS_KEY_PREFIX`(기본 `senecial`), `REDIS_CONNECT_TIMEOUT_MS`/`REDIS_COMMAND_TIMEOUT_MS`, `RATE_LIMIT_FAIL_MODE`(`closed`(기본)/`open`).
 - **원자적 consume**: `INCR`+조건부 `PEXPIRE`(첫 히트에서만)를 단일 Lua 스크립트(`src/server/services/rate-limit/redis-lua-scripts.ts`)로 실행합니다 — 별도의 `GET`→`INCR`→`EXPIRE` 호출은 동시 요청 사이에 경쟁 조건(둘 다 갱신 전 값을 읽어 카운트가 부정확해짐)을 유발할 수 있어 의도적으로 피했습니다. 실제 Redis에 25개 동시 요청을 쏘아 정확히 `limit`개만 허용되는지 확인하는 통합 테스트로 검증했습니다(`tests/integration/redis-rate-limit-real.test.ts`).
 - **다축(multi-axis) 로그인 제한**(`enforceLoginRateLimit()`, `src/lib/rate-limit/enforce-rate-limit.ts`): 로그인 실패 시 identifier-only(계정 고정, IP 회전에 대비), IP-only(IP 고정, 계정 회전에 대비 — credential stuffing/password spraying), 기존 combined(둘 다) 세 축을 모두 독립적으로 소비하고, 셋 중 하나라도 초과하면 차단합니다. 로그인 **성공** 시에는 여전히 아무 축도 소비하지 않습니다(정상 사용자가 반복 로그인으로 차단되지 않도록 하는 기존 Phase 9 원칙 유지).
 - **trusted proxy IP 처리**: 위 "Reverse proxy 체크리스트"의 `TRUST_PROXY`/`TRUSTED_PROXY_HOPS` 참고.
@@ -865,15 +865,15 @@ seed 실행 후 다음 계정으로 로그인할 수 있습니다.
 
 | 이메일 | 역할 | 비밀번호 |
 |---|---|---|
-| `owner@example.com` | OWNER | `ClauseBase1234!` |
-| `member@example.com` | MEMBER | `ClauseBase1234!` |
+| `owner@example.com` | OWNER | `Senecial1234!` |
+| `member@example.com` | MEMBER | `Senecial1234!` |
 
 **개발 전용 비밀번호입니다. 운영 환경에서는 절대 사용하지 마십시오.**
 
 ## 테스트 실행
 
 ```bash
-pnpm test        # .env.test로 clausebase_test에 migrate deploy 후 전체 Vitest(단위+통합) 실행
+pnpm test        # .env.test로 senecial_test에 migrate deploy 후 전체 Vitest(단위+통합) 실행
 pnpm test:unit    # 단위 테스트만 (DB 불필요)
 pnpm test:e2e     # Playwright E2E (내부적으로 .env.test 기반 dev 서버를 별도 포트에 띄웁니다)
 ```
@@ -881,7 +881,7 @@ pnpm test:e2e     # Playwright E2E (내부적으로 .env.test 기반 dev 서버�
 **테스트 격리 개선 (Phase 7)**: Phase 6까지는 `vitest.config.ts`에 `fileParallelism: false`를 전역으로 걸어 모든 테스트 파일을 직렬 실행했습니다(작업 큐 클레임 함수의 동시성 테스트가 다른 파일과 섞이면 레이스가 나기 때문). Phase 7부터는 `test.projects`로 범위를 좁혔습니다 — `claimNextPendingJob`/`claimNextPendingClauseSegmentationJob`을 직접 또는 워커를 통해 호출하는 4개 파일만 `"queue"` 프로젝트(직렬)로 묶고, 나머지는 전부 `"default"` 프로젝트(병렬)로 돌립니다. 전체 스위트 실행 시간이 약 36~64초(Phase 6, 전체 직렬)에서 약 21~24초(Phase 7, 분리 후)로 줄었고, 반복 실행에서도 100% 안정적입니다(플레이키 없음).
 
 - 단위 테스트: 이메일 정규화, 회원가입/계약/상대방/초대 Zod 검증(날짜 순서, 금액·통화 형식, 이메일 형식, 비밀번호 확인 일치, 페이지네이션 한계 포함), 조직 slug 생성, 비밀번호 해시/검증, 역할 비교, 계약 상태 계산(어제/오늘/30·31일 경계, 월말·연말 경계, **UTC/KST 자정 교차 경계** 포함), 안전한 에러 메시지 변환, ActionResult 변환, 파일 매직바이트 시그니처 검증(PDF/DOCX/HWP, 스푸핑된 MIME 타입 거부 포함), Content-Disposition 헤더 안전 인코딩(CRLF 인젝션, 따옴표 이탈, UTF-8 파일명 방지/처리), **초대 토큰 생성·해시·만료 판정, 초대 URL 조립, 마지막 OWNER 판정, 계약 만료 알림의 5개 임계값·자동갱신 통보 알림·eventKey 생성(모두 도메인 순수 함수), 감사 로그 표시 문장 변환(민감 필드 화이트리스트 검증 포함), 업로드 크기 환경변수 파싱(유효하지 않은 값의 안전한 폴백), reconciliation 재시도 판정, 안전한 storage-delete 오류 변환(스택 트레이스 미포함 확인)**, **추출 작업 상태 전이(허용/금지), 체크섬 결정성(동일 입력 → 동일 해시), 재시도 가능 여부 판정(코드별 + 시도 횟수), 정체(stale) 작업 판정, `pdf-lib`/`docx`로 코드에서 생성한 실제 PDF/DOCX 픽스처를 사용한 텍스트 추출(정상 문서, 페이지당 문자 수 휴리스틱으로 감지되는 스캔 문서 → OCR_REQUIRED, 손상된 파일 → 안전한 실패), 날짜/금액(한국어 숫자 표현 "금 일억원정" 포함, 12자리 상한 초과 시 null)/통화/불리언/계약유형 정규화, 정규화된 제안값의 필드별 형태 검증(허용되지 않은 fieldKey 자동 제거 포함), 신뢰도 범위·sourceText 길이 상한·공급자 응답 스키마 Zod 검증, 낙관적 동시성 비교 함수, 운영 환경 개발용 추출기 사용 차단(`vi.stubEnv`로 NODE_ENV/오버라이드 조합별 검증)**, **(Phase 7) 조항 번호 패턴 인식(제N조/제N항/①~⑳/1./1)/(1)/가.나., 날짜·금액·계약번호 오탐 방지 가드), 결정론적 한국어 조항 분해기(offset 보존, 헤더 중복 방지 회귀 테스트 포함), offset/계층 구조 검증 순수 함수, `normalizeClauseText`, 결정론적 조항 분류기(키워드 우선순위/동점 처리/UNKNOWN 폴백), 분해 작업 상태 전이·정체 판정·jobKey 결정성, 검색 스니펫 생성(길이 상한/HTML 미생성), 결정론적 조항 diff/비교(숫자·날짜·금액 토큰 추출), 검토 신호 규칙 감지(자동갱신/무제한 배상/일방적 해지 키워드, 근거 스니펫 창), 라벨/공시 문구에 금지된 단정적 법률 표현이 없는지 검증, 운영 환경 개발용 분해기·분류기 사용 차단**, **(Phase 8) 만료 구간(8개 버킷)·미처리 기간 구간(5개 버킷)의 KST 일 경계 판정(`getComputedContractStatus`의 EXPIRING/EXPIRED 경계와 일치하는지 포함), KST 월 키/월 경계(`monthKeyKst`/`monthRangeUtcBounds`, 연말·KST 자정 교차 경계 포함)와 최근 N개월 zero-fill 목록, 분석 기간 필터 안전한 기본값(기간 미지정 시 12개월 기본, 잘못된 범위 폴백, 최대 범위 clamp), CSV 필드 이스케이프(RFC 4180 quoting, 수식 인젝션 문자 7종 무력화, 필드 내 CRLF가 새 행을 만들지 않는지), UTF-8 BOM 부착, 안전한 CSV 파일명(CRLF/따옴표 제거), 분석 필터 Zod 스키마의 안전한 기본값(잘못된 값 무시), 분석 라벨/문구에 금지된 단정적 법률·위험 표현이 없는지 검증, 0으로 나누기 가드(`safePercentage`)**
-- 통합 테스트: `docker/init-test-db.sql`로 생성되는 `clausebase_test` DB에서 실행되며 운영/개발 DB와 분리됩니다.
+- 통합 테스트: `docker/init-test-db.sql`로 생성되는 `senecial_test` DB에서 실행되며 운영/개발 DB와 분리됩니다.
   - 회원가입 시 User/Organization/OWNER Membership 생성 및 AuditLog 기록, nested-write 트랜잭션의 원자적 rollback, 동일 이메일 중복 가입 차단
   - 다른 조직 ID로 Membership 권한 위조 불가, Membership 없는 사용자 접근 차단, MEMBER/OWNER 역할 검사
   - 올바른/잘못된 비밀번호 로그인 성공·실패
@@ -1022,7 +1022,7 @@ scripts/
   benchmark-analytics-queries.ts      # (Phase 8) pnpm analytics:benchmark
 tests/
   unit/         # DB 불필요
-  integration/  # clausebase_test DB 필요
+  integration/  # senecial_test DB 필요
   e2e/          # Playwright, 별도 포트의 dev 서버 필요
 storage/          # 로컬 파일 저장 디렉터리 (git 제외, .gitkeep만 추적)
 middleware.ts     # /invitations/:token* 에 Cache-Control: no-store, Referrer-Policy: no-referrer 적용

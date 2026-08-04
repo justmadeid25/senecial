@@ -20,7 +20,7 @@ export interface PasswordChangedTemplateInput {
  */
 export function renderPasswordChangedEmail(input: PasswordChangedTemplateInput): RenderedEmail {
   const changedAtText = input.changedAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
-  const subject = sanitizeEmailSubject("ClauseBase 비밀번호가 변경되었습니다");
+  const subject = sanitizeEmailSubject("Senecial 비밀번호가 변경되었습니다");
 
   const bodyHtml = `
     <p>안녕하세요,</p>

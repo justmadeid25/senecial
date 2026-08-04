@@ -66,7 +66,7 @@ pgvector 컬럼은 고정 폭(`vector(256)`, `VECTOR_NATIVE_DIMENSION` - 현재 
 - **In-process single-flight** (`server/services/ai/cache/in-flight-deduplication.ts`) - 항상 활성. 동일 프로세스 내 동일 캐시 key에 대한 동시 요청은 하나의 계산에 합류합니다(embedding/retrieval/prompt 캐시 전부 적용).
 - **분산 lock** (`server/services/ai/cache/distributed-lock.ts`, `RedisDistributedLock`) - `AI_CACHE_PROVIDER=redis`일 때만 의미가 있으며, 가장 비용이 큰 경로(prompt/LLM 캐시, `askQuestion()`)에 적용됩니다. lock 획득 실패 시 최대 3초 동안 캐시를 폴링하고, 그래도 값이 없으면 자체적으로 계산합니다 - **무한 대기 없음**.
 - Streaming(`askQuestionStreaming()`)은 생성기 스트림을 여러 요청이 공유할 수 없어 더 가벼운 형태(같은 key로 스트리밍 중이면 최대 3초 대기 후 캐시 조회, 실패 시 독립 스트리밍)로 구현되어 있습니다.
-- 지표: `clausebase_ai_cache_stampede_joined_total`.
+- 지표: `senecial_ai_cache_stampede_joined_total`.
 
 ## AI Configuration Versioning (Phase 12.2 Part C)
 
@@ -98,10 +98,10 @@ pgvector 컬럼은 고정 폭(`vector(256)`, `VECTOR_NATIVE_DIMENSION` - 현재 
 
 ## AI 운영 예산·한도 (Phase 12.2 Part E)
 
-- **Latency budget** (`domain/ai/latency-budget.ts`): embedding 2s, vectorSearch/keywordSearch 100ms, hybridMerge 50ms, retrieval(전체 파이프라인) 500ms, llm 3s - "development" provider(embedding/llm)는 의도적으로 게이트하지 않습니다(근거: 결정론적 in-process 구현은 실제 provider의 네트워크 왕복 지연을 대표하지 않음 - §29 자체 지침). 위반 시 `clausebase_ai_latency_budget_exceeded_total{operation=}` 증가.
-- **Context budget** (`domain/ai/context-budget.ts`): `CONTEXT_MAX_CLAUSES=8` (hallucination guard의 strongCitations를 이 개수로 truncate, 초과분은 낮은 점수부터 제거 - 안전, `clausebase_ai_context_truncation_total`), `MAX_QUESTION_LENGTH=2000`자(초과 시 `QuestionTooLongError`, truncate 아닌 거부 - 사용자 질문은 절대 임의로 자르지 않음).
+- **Latency budget** (`domain/ai/latency-budget.ts`): embedding 2s, vectorSearch/keywordSearch 100ms, hybridMerge 50ms, retrieval(전체 파이프라인) 500ms, llm 3s - "development" provider(embedding/llm)는 의도적으로 게이트하지 않습니다(근거: 결정론적 in-process 구현은 실제 provider의 네트워크 왕복 지연을 대표하지 않음 - §29 자체 지침). 위반 시 `senecial_ai_latency_budget_exceeded_total{operation=}` 증가.
+- **Context budget** (`domain/ai/context-budget.ts`): `CONTEXT_MAX_CLAUSES=8` (hallucination guard의 strongCitations를 이 개수로 truncate, 초과분은 낮은 점수부터 제거 - 안전, `senecial_ai_context_truncation_total`), `MAX_QUESTION_LENGTH=2000`자(초과 시 `QuestionTooLongError`, truncate 아닌 거부 - 사용자 질문은 절대 임의로 자르지 않음).
 - **AI Concurrency Limit** (§33, `server/services/ai/concurrency/`): 사용자별/조직별 동시 in-flight AI 요청 상한(기본 3/10, `AI_CONCURRENCY_MAX_PER_USER`/`AI_CONCURRENCY_MAX_PER_ORGANIZATION`). `RATE_LIMITER`(memory|redis) 설정을 그대로 재사용 - 별도 driver 플래그를 추가하지 않았습니다. `memory`는 기존 rate limiter와 동일하게 운영 환경에서 `ALLOW_IN_MEMORY_RATE_LIMITER=true` 없이는 차단됩니다. `/api/ai/ask`에서 실제로 강제됩니다(`ConcurrencyLimitError`, 429).
-- **Token/비용 계측** (§31): `recordLlmUsage()`가 이제 `provider`/`model` 라벨을 받아 `clausebase_ai_llm_usage_by_provider_*{provider_model=}`로 분해 노출(organizationId 등 고카디널리티 라벨은 여전히 없음). Development provider는 `costUsd`를 전달하지 않으므로 집계에서 자연스럽게 "unknown"으로 구분됩니다(0으로 위장하지 않음).
+- **Token/비용 계측** (§31): `recordLlmUsage()`가 이제 `provider`/`model` 라벨을 받아 `senecial_ai_llm_usage_by_provider_*{provider_model=}`로 분해 노출(organizationId 등 고카디널리티 라벨은 여전히 없음). Development provider는 `costUsd`를 전달하지 않으므로 집계에서 자연스럽게 "unknown"으로 구분됩니다(0으로 위장하지 않음).
 - **조직별 사용량 영구 저장** (§32, `AiUsageRecord`) - **이번 Phase에서 구현하지 않았습니다.** 위 프로세스 전역 메트릭만 존재하며, 조직별/대화별 과금 집계가 필요해지면 `organizationId, userId?, conversationId, messageId, provider, model, inputTokens, outputTokens, estimatedCostMinor, currency, latencyMs, createdAt` 필드를 가진 신규 모델을 추가하고(질문/응답 원문·embedding·API key는 저장 금지), `ask-question.ts`의 `recordLlmUsage()` 호출 지점에 함께 쓰기만 하면 됩니다 - 확장 지점으로 문서화합니다.
 
 ## 운영 CLI
@@ -116,7 +116,7 @@ pgvector 컬럼은 고정 폭(`vector(256)`, `VECTOR_NATIVE_DIMENSION` - 현재 
 
 ## Monitoring
 
-`/api/metrics`에 Phase 12.1 전용 지표: `clausebase_ai_vector_candidate_count`, `clausebase_ai_vector_fallback_total`, `clausebase_ai_vector_search_errors_total`, `clausebase_ai_vector_backfill_processed_total`, `clausebase_ai_stale_embedding_count`(gauge), `clausebase_dependency_duration{dependency="vectorSearch"|"keywordSearch"|"hybridMerge"}`. Phase 12.2 전용 지표 추가: `clausebase_ai_context_truncation_total`, `clausebase_ai_latency_budget_exceeded_total{operation=}`, `clausebase_ai_concurrent_requests`(gauge), `clausebase_ai_cache_stampede_joined_total`, `clausebase_ai_llm_usage_by_provider_*{provider_model=}`. 조항 원문, 검색 질문, embedding 값, organizationId는 어떤 라벨에도 포함되지 않습니다.
+`/api/metrics`에 Phase 12.1 전용 지표: `senecial_ai_vector_candidate_count`, `senecial_ai_vector_fallback_total`, `senecial_ai_vector_search_errors_total`, `senecial_ai_vector_backfill_processed_total`, `senecial_ai_stale_embedding_count`(gauge), `senecial_dependency_duration{dependency="vectorSearch"|"keywordSearch"|"hybridMerge"}`. Phase 12.2 전용 지표 추가: `senecial_ai_context_truncation_total`, `senecial_ai_latency_budget_exceeded_total{operation=}`, `senecial_ai_concurrent_requests`(gauge), `senecial_ai_cache_stampede_joined_total`, `senecial_ai_llm_usage_by_provider_*{provider_model=}`. 조항 원문, 검색 질문, embedding 값, organizationId는 어떤 라벨에도 포함되지 않습니다.
 
 ## Readiness / Production Validator
 

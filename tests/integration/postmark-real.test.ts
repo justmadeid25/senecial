@@ -30,8 +30,8 @@ const hasPostmarkTest = process.env.TEST_POSTMARK === "true";
 
 const config: EmailConfig = {
   provider: "postmark",
-  fromAddress: "clausebase-test@example.com",
-  fromName: "ClauseBase Integration Test",
+  fromAddress: "senecial-test@example.com",
+  fromName: "Senecial Integration Test",
   postmarkServerToken: process.env.TEST_POSTMARK_SERVER_TOKEN || "POSTMARK_API_TEST",
   postmarkMessageStream: "outbound",
 };
@@ -58,7 +58,7 @@ describe.skipIf(!hasPostmarkTest)("PostmarkTransactionalMailer against the real 
     const result = await mailer.send({
       messageType: TRANSACTIONAL_MESSAGE_TYPES.EMAIL_VERIFICATION,
       to: "test@blackhole.postmarkapp.com",
-      subject: "ClauseBase 통합 테스트 이메일 인증",
+      subject: "Senecial 통합 테스트 이메일 인증",
       html: "<p>실제 Postmark API 왕복 테스트입니다.</p>",
       text: "실제 Postmark API 왕복 테스트입니다.",
       idempotencyKey: `postmark-real-test:${randomUUID()}`,
@@ -79,7 +79,7 @@ describe.skipIf(!hasPostmarkTest)("PostmarkTransactionalMailer against the real 
       const result = await mailer.send({
         messageType,
         to: "test@blackhole.postmarkapp.com",
-        subject: `ClauseBase 테스트 - ${messageType}`,
+        subject: `Senecial 테스트 - ${messageType}`,
         html: `<p>${messageType} html body</p>`,
         text: `${messageType} text body`,
         idempotencyKey: `postmark-real-test:${messageType}:${randomUUID()}`,

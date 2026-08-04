@@ -37,7 +37,7 @@ import { formatAmount } from "@/lib/format/money";
 import { requireOrganizationMembership } from "@/lib/permissions";
 import { analyticsFilterSchema, parseAnalyticsFilters } from "@/lib/validation/analytics";
 
-export const metadata: Metadata = { title: "분석 | ClauseBase" };
+export const metadata: Metadata = { title: "분석 | Senecial" };
 
 function toSingleValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;

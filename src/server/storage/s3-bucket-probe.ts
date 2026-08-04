@@ -44,7 +44,7 @@ export async function probeS3BucketAccess(client: S3Client, config: S3Config): P
  */
 export async function probeS3FullAccess(client: S3Client, config: S3Config): Promise<S3ProbeResult> {
   const key = `.health-check/${randomUUID()}`;
-  const body = Buffer.from(`clausebase production:validate probe ${new Date().toISOString()}`);
+  const body = Buffer.from(`senecial production:validate probe ${new Date().toISOString()}`);
 
   try {
     await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: key, Body: body }));

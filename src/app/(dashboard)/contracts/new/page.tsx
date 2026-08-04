@@ -7,7 +7,7 @@ import { listCounterpartyOptions } from "@/features/contracts/server/list-counte
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "계약 생성 | ClauseBase" };
+export const metadata: Metadata = { title: "계약 생성 | Senecial" };
 
 export default async function NewContractPage() {
   let authContext;

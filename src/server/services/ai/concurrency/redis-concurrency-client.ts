@@ -11,7 +11,7 @@ export interface RedisWithConcurrencyCommands extends RedisClient {
 }
 
 declare global {
-  var __clausebaseRedisAiConcurrencyClient: RedisWithConcurrencyCommands | undefined;
+  var __senecialRedisAiConcurrencyClient: RedisWithConcurrencyCommands | undefined;
 }
 
 /**
@@ -25,8 +25,8 @@ declare global {
  * docstring for the full explanation).
  */
 export function getAiConcurrencyRedisClient(config: RedisConfig): RedisWithConcurrencyCommands {
-  if (globalThis.__clausebaseRedisAiConcurrencyClient) {
-    return globalThis.__clausebaseRedisAiConcurrencyClient;
+  if (globalThis.__senecialRedisAiConcurrencyClient) {
+    return globalThis.__senecialRedisAiConcurrencyClient;
   }
 
   const client = new Redis(config.url, {
@@ -45,13 +45,13 @@ export function getAiConcurrencyRedisClient(config: RedisConfig): RedisWithConcu
     getLogger().error("redis.connection_error", { errorCode: error.name, subsystem: "ai-concurrency" });
   });
 
-  globalThis.__clausebaseRedisAiConcurrencyClient = client;
+  globalThis.__senecialRedisAiConcurrencyClient = client;
   return client;
 }
 
 export async function closeAiConcurrencyRedisClient(): Promise<void> {
-  if (globalThis.__clausebaseRedisAiConcurrencyClient) {
-    await globalThis.__clausebaseRedisAiConcurrencyClient.quit().catch(() => undefined);
-    globalThis.__clausebaseRedisAiConcurrencyClient = undefined;
+  if (globalThis.__senecialRedisAiConcurrencyClient) {
+    await globalThis.__senecialRedisAiConcurrencyClient.quit().catch(() => undefined);
+    globalThis.__senecialRedisAiConcurrencyClient = undefined;
   }
 }

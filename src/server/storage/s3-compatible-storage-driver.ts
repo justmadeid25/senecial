@@ -40,7 +40,7 @@ export class S3CompatibleStorageDriver implements StorageDriver {
     }
   }
 
-  /** Phase 11 §Monitoring - every S3 SDK round-trip below goes through this, so `clausebase_dependency_duration{dependency="s3"}` reflects EVERY put/get/delete/head call this driver makes, success or failure. */
+  /** Phase 11 §Monitoring - every S3 SDK round-trip below goes through this, so `senecial_dependency_duration{dependency="s3"}` reflects EVERY put/get/delete/head call this driver makes, success or failure. */
   private async timed<T>(fn: () => Promise<T>): Promise<T> {
     const start = performance.now();
     try {

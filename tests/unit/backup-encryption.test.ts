@@ -23,7 +23,7 @@ describe("AgeBackupEncryptor (Phase 10C §2/§4/§7)", () => {
   const plaintextContent = Buffer.concat([Buffer.from("backup encryption test fixture\n"), randomBytes(256)]);
 
   beforeAll(async () => {
-    workDir = await mkdtemp(path.join(tmpdir(), "clausebase-age-test-"));
+    workDir = await mkdtemp(path.join(tmpdir(), "senecial-age-test-"));
     identity = await generateIdentity();
     recipient = await identityToRecipient(identity);
     otherIdentity = await generateIdentity();

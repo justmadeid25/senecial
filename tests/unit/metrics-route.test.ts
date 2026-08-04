@@ -49,7 +49,7 @@ describe("GET /api/metrics (Phase 11 §Metrics endpoint)", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
 
     const body = await response.text();
-    expect(body).toContain("clausebase_");
+    expect(body).toContain("senecial_");
   });
 
   it("never echoes the configured token itself back in the response body", async () => {

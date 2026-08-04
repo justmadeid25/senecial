@@ -9,7 +9,7 @@ import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { toDateInputValue } from "@/lib/format/date";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "계약 수정 | ClauseBase" };
+export const metadata: Metadata = { title: "계약 수정 | Senecial" };
 
 export default async function EditContractPage({
   params,

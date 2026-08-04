@@ -4,7 +4,7 @@
 
 | 항목 | 격리 방식 |
 |---|---|
-| Database | `clausebase_e2e` (dev `.env`의 `clausebase`, Vitest `.env.test`의 `clausebase_test`와 완전히 분리) - `scripts/e2e-db-reset.ts`가 매 실행 전 존재 확인 + migration 적용 + 전체 테이블 truncate |
+| Database | `senecial_e2e` (dev `.env`의 `senecial`, Vitest `.env.test`의 `senecial_test`와 완전히 분리) - `scripts/e2e-db-reset.ts`가 매 실행 전 존재 확인 + migration 적용 + 전체 테이블 truncate |
 | File storage | `tmp/e2e-storage/<run-id>` - `playwright.config.ts`가 매 invocation마다 고유 run-id 생성(`E2E_RUN_ID` env로 override 가능, `scripts/e2e-repeat-runner.ts`가 반복 실행마다 별도 id 부여) |
 | Redis/cache/mail | 이 리포지토리의 dev/e2e 환경은 `RATE_LIMITER`/`AI_CACHE_PROVIDER` 모두 기본값(`memory`)이라 Redis 자체가 아직 루프에 없음 - `redis` 사용 시 `REDIS_KEY_PREFIX`를 별도 값으로 설정해 격리하십시오(기존 dev/운영 key는 절대 건드리지 않음) |
 

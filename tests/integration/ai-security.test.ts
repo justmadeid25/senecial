@@ -169,7 +169,7 @@ describe("§Security - no raw clause leakage (Phase 12 Part M)", () => {
 describe("§Security - hidden system prompt (Phase 12 Part M)", () => {
   it("the system prompt's own distinctive text never appears in a real answer or its citations", async () => {
     const systemPrompt = buildSystemPrompt();
-    const distinctivePhrase = "당신은 ClauseBase의 계약 분석 보조 AI입니다";
+    const distinctivePhrase = "당신은 Senecial의 계약 분석 보조 AI입니다";
     expect(systemPrompt).toContain(distinctivePhrase); // sanity - the phrase we're checking for really is in the prompt
 
     const result = await askQuestion({ organizationId: org.id, question: "손해배상의 범위는 어떻게 되나요?" });

@@ -11,7 +11,7 @@ import { prisma } from "../src/server/db/client";
 
 /**
  * §25/§36 - measures the analytics query services against whatever data
- * currently exists in the "clausebase-analytics-perf" organization (see
+ * currently exists in the "senecial-analytics-perf" organization (see
  * scripts/seed-analytics-performance-data.ts). Development-use only; not
  * part of the automated test suite (query timing is environment-dependent
  * and not a meaningful pass/fail assertion).
@@ -27,7 +27,7 @@ async function timeIt<T>(label: string, fn: () => Promise<T>): Promise<T> {
 
 async function main() {
   const organization = await prisma.organization.findUnique({
-    where: { slug: "clausebase-analytics-perf" },
+    where: { slug: "senecial-analytics-perf" },
     select: { id: true },
   });
   if (!organization) {

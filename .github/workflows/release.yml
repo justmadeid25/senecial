@@ -36,12 +36,12 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_DB: clausebase_test
-          POSTGRES_USER: clausebase
+          POSTGRES_DB: senecial_test
+          POSTGRES_USER: senecial
           POSTGRES_PASSWORD: development-only-password
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-cmd "pg_isready -U senecial -d senecial_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -54,7 +54,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_test?schema=public
       AUTH_SECRET: release-validate-only-secret-not-for-production-000
       REDIS_URL: redis://localhost:6379
     steps:

@@ -13,7 +13,7 @@ describe("loadEmailConfig / validateEmailConfig / resolveEmailConfig (§5/§6)",
   it("loadEmailConfig never throws for a completely empty environment", () => {
     const config = loadEmailConfig(env({}));
     expect(config.fromAddress).toBeUndefined();
-    expect(config.fromName).toBe("ClauseBase");
+    expect(config.fromName).toBe("Senecial");
   });
 
   it("validateEmailConfig fails when EMAIL_FROM_ADDRESS is missing", () => {
@@ -29,7 +29,7 @@ describe("loadEmailConfig / validateEmailConfig / resolveEmailConfig (§5/§6)",
   it("validateEmailConfig fails when fromName contains CRLF (header injection)", () => {
     const result = validateEmailConfig({
       fromAddress: "noreply@example.com",
-      fromName: "ClauseBase\r\nBcc: evil@evil.com",
+      fromName: "Senecial\r\nBcc: evil@evil.com",
     });
     expect(result.valid).toBe(false);
   });
@@ -47,7 +47,7 @@ describe("loadEmailConfig / validateEmailConfig / resolveEmailConfig (§5/§6)",
   it("validateEmailConfig passes for a fully valid postmark config", () => {
     const result = validateEmailConfig({
       fromAddress: "noreply@example.com",
-      fromName: "ClauseBase",
+      fromName: "Senecial",
       provider: "postmark",
       postmarkServerToken: "test-token",
     });

@@ -19,7 +19,7 @@ import { ForbiddenError, UnauthorizedError, toSafeErrorMessage } from "@/lib/err
 import { formatDateKst } from "@/lib/format/date";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "상대방 목록 | ClauseBase" };
+export const metadata: Metadata = { title: "상대방 목록 | Senecial" };
 
 export default async function CounterpartiesPage({
   searchParams,

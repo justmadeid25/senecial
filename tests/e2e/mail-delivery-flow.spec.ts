@@ -22,8 +22,8 @@ const newPassword = "NewPassword456";
 
 function runMailWorker() {
   // §Phase 12.4 §2 - explicitly .env.e2e, not .env.test: this worker must
-  // operate on the SAME database this E2E run is using (clausebase_e2e),
-  // never the Vitest database (clausebase_test). In practice DATABASE_URL
+  // operate on the SAME database this E2E run is using (senecial_e2e),
+  // never the Vitest database (senecial_test). In practice DATABASE_URL
   // is already set by the outer `dotenv -e .env.e2e` wrapper and dotenv-cli
   // never overrides an already-set env var (verified empirically), so this
   // previously had no observable effect - but naming the wrong file here

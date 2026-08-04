@@ -89,7 +89,7 @@ async function uploadAndProcessContract(title: string, lines: string[]) {
 
 function cacheHitCount(cacheName: string): number {
   const output = renderPrometheusMetrics();
-  const match = output.match(new RegExp(`clausebase_ai_cache_hits_total\\{cache="${cacheName}"\\} (\\d+)`));
+  const match = output.match(new RegExp(`senecial_ai_cache_hits_total\\{cache="${cacheName}"\\} (\\d+)`));
   return match ? Number(match[1]) : 0;
 }
 

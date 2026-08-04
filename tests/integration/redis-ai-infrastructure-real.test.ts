@@ -24,7 +24,7 @@ const testRedisUrl = process.env.TEST_REDIS_URL;
 const hasRedisConfig = Boolean(testRedisUrl);
 
 describe.skipIf(!hasRedisConfig)("Redis AI infrastructure against real Redis (Phase 12.3 §14/§15/§16)", () => {
-  const keyPrefix = `clausebase-test-${randomUUID().slice(0, 8)}`;
+  const keyPrefix = `senecial-test-${randomUUID().slice(0, 8)}`;
   let rawClient: Redis;
 
   beforeAll(() => {

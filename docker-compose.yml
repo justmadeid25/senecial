@@ -1,4 +1,4 @@
-# Local development PostgreSQL for ClauseBase.
+# Local development PostgreSQL for Senecial.
 #
 # Credentials below are development-only and must never be reused in any
 # deployed environment. Production databases must use secrets management
@@ -13,21 +13,21 @@
 services:
   postgres:
     image: postgres:18-alpine
-    container_name: clausebase-postgres
+    container_name: senecial-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: clausebase
-      POSTGRES_USER: clausebase
+      POSTGRES_DB: senecial
+      POSTGRES_USER: senecial
       POSTGRES_PASSWORD: development-only-password
     ports:
       - "5432:5432"
     volumes:
-      - clausebase_postgres_data:/var/lib/postgresql/data
-      # Creates the clausebase_test database on first container init, so
+      - senecial_postgres_data:/var/lib/postgresql/data
+      # Creates the senecial_test database on first container init, so
       # integration tests never run against the main dev database.
       - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clausebase -d clausebase"]
+      test: ["CMD-SHELL", "pg_isready -U senecial -d senecial"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -43,7 +43,7 @@ services:
   # harmless if unused (RATE_LIMITER=memory, the default, never connects to it).
   redis:
     image: redis:8-alpine
-    container_name: clausebase-redis
+    container_name: senecial-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -64,17 +64,17 @@ services:
   # local dev defaults to FILE_STORAGE_DRIVER=local (no bucket needed at all).
   minio:
     image: minio/minio:latest
-    container_name: clausebase-minio
+    container_name: senecial-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: clausebase
+      MINIO_ROOT_USER: senecial
       MINIO_ROOT_PASSWORD: development-only-password
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - clausebase_minio_data:/data
+      - senecial_minio_data:/data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -117,7 +117,7 @@ services:
       target: builder
     command: ["pnpm", "exec", "prisma", "migrate", "deploy"]
     environment:
-      DATABASE_URL: postgresql://clausebase:development-only-password@postgres:5432/clausebase?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@postgres:5432/senecial?schema=public
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,7 +138,7 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://clausebase:development-only-password@postgres:5432/clausebase?schema=public
+      DATABASE_URL: postgresql://senecial:development-only-password@postgres:5432/senecial?schema=public
       AUTH_SECRET: smoke-test-only-secret-not-for-production-use
       AUTH_URL: http://localhost:3000
       APP_URL: http://localhost:3000
@@ -177,5 +177,5 @@ services:
         reservations: { memory: 256m }
 
 volumes:
-  clausebase_postgres_data:
-  clausebase_minio_data:
+  senecial_postgres_data:
+  senecial_minio_data:

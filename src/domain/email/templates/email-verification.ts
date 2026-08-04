@@ -12,7 +12,7 @@ export interface EmailVerificationTemplateInput {
 /** Phase 10B section 8 - no user-controlled text at all (unlike the invitation template) - only a fixed message plus the server-generated URL and expiry, so there is nothing here that needs HTML-escaping beyond the URL itself (handled by renderEmailLayout). */
 export function renderEmailVerificationEmail(input: EmailVerificationTemplateInput): RenderedEmail {
   const expiresAtText = input.expiresAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
-  const subject = sanitizeEmailSubject("ClauseBase 이메일 주소를 인증해 주세요");
+  const subject = sanitizeEmailSubject("Senecial 이메일 주소를 인증해 주세요");
 
   const bodyHtml = `
     <p>안녕하세요,</p>

@@ -7,7 +7,7 @@ import { AcceptInvitationButton } from "@/features/invitations/components/accept
 import { RegisterAndAcceptForm } from "@/features/invitations/components/register-and-accept-form";
 import { getInvitationByToken } from "@/features/invitations/server/get-invitation-by-token";
 
-export const metadata: Metadata = { title: "조직 초대 | ClauseBase" };
+export const metadata: Metadata = { title: "조직 초대 | Senecial" };
 
 const STATUS_MESSAGES: Record<string, string> = {
   not_found: "유효하지 않은 초대 링크입니다.",

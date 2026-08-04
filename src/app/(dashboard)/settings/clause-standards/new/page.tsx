@@ -7,7 +7,7 @@ import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationRole } from "@/lib/permissions/require-organization-role";
 import { MembershipRole } from "@/generated/prisma/enums";
 
-export const metadata: Metadata = { title: "기준 조항 등록 | ClauseBase" };
+export const metadata: Metadata = { title: "기준 조항 등록 | Senecial" };
 
 export default async function NewClauseStandardPage() {
   try {

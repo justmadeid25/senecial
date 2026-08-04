@@ -22,7 +22,7 @@ import { formatDateKst, formatDateTimeKst } from "@/lib/format/date";
 import { formatAmount } from "@/lib/format/money";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "계약 목록 | ClauseBase" };
+export const metadata: Metadata = { title: "계약 목록 | Senecial" };
 
 export default async function ContractsPage({
   searchParams,

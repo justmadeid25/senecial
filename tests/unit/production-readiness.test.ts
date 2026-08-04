@@ -6,8 +6,8 @@ const BASE_PRODUCTION_ENV: NodeJS.ProcessEnv = {
   NODE_ENV: "production",
   DATABASE_URL: "postgresql://user:pass@host:5432/db",
   AUTH_SECRET: "a".repeat(40),
-  APP_URL: "https://clausebase.example.com",
-  AUTH_URL: "https://clausebase.example.com",
+  APP_URL: "https://senecial.example.com",
+  AUTH_URL: "https://senecial.example.com",
 };
 
 function findCheck(checks: ReturnType<typeof validateProductionEnvironment>, name: string) {
@@ -41,7 +41,7 @@ describe("validateProductionEnvironment (§36)", () => {
   it("fails a non-HTTPS APP_URL/AUTH_URL", () => {
     const checks = validateProductionEnvironment({
       ...BASE_PRODUCTION_ENV,
-      APP_URL: "http://clausebase.example.com",
+      APP_URL: "http://senecial.example.com",
     });
     expect(findCheck(checks, "APP_URL").status).toBe("fail");
   });
@@ -70,7 +70,7 @@ describe("validateProductionEnvironment (§36)", () => {
   it("§Phase 12.3 Part B - the override does nothing unless the value is exactly the string \"true\"", () => {
     const checks = validateProductionEnvironment({
       ...BASE_PRODUCTION_ENV,
-      APP_URL: "http://clausebase.example.com",
+      APP_URL: "http://senecial.example.com",
       ALLOW_HTTP_IN_PRODUCTION_TESTING: "1",
     });
     expect(findCheck(checks, "APP_URL").status).toBe("fail");
@@ -142,7 +142,7 @@ describe("validateProductionEnvironment (§36)", () => {
       ...BASE_PRODUCTION_ENV,
       FILE_STORAGE_DRIVER: "s3",
       S3_REGION: "us-east-1",
-      S3_BUCKET: "clausebase-prod-contracts",
+      S3_BUCKET: "senecial-prod-contracts",
       RATE_LIMITER: "redis",
       REDIS_URL: "redis://prod-redis:6379",
     });
@@ -180,7 +180,7 @@ describe("validateProductionEnvironment (§36)", () => {
       ...BASE_PRODUCTION_ENV,
       FILE_STORAGE_DRIVER: "s3",
       S3_REGION: "us-east-1",
-      S3_BUCKET: "clausebase-prod-contracts",
+      S3_BUCKET: "senecial-prod-contracts",
     });
     expect(findCheck(checks, "S3 서버 측 암호화").status).toBe("warn");
   });
@@ -201,7 +201,7 @@ describe("validateProductionEnvironment (§36)", () => {
       INVITATION_MAILER: "real",
       ACCOUNT_SECURITY_MAILER: "real",
       EMAIL_PROVIDER: "postmark",
-      EMAIL_FROM_ADDRESS: "noreply@clausebase.example.com",
+      EMAIL_FROM_ADDRESS: "noreply@senecial.example.com",
       POSTMARK_SERVER_TOKEN: "prod-token",
     });
     expect(findCheck(checks, "이메일 인증 mailer").status).toBe("pass");
@@ -219,7 +219,7 @@ describe("validateProductionEnvironment (§36)", () => {
       ...BASE_PRODUCTION_ENV,
       ACCOUNT_SECURITY_MAILER: "real",
       EMAIL_PROVIDER: "postmark",
-      EMAIL_FROM_ADDRESS: "noreply@clausebase.example.com",
+      EMAIL_FROM_ADDRESS: "noreply@senecial.example.com",
     });
     expect(findCheck(checks, "EMAIL_PROVIDER / EMAIL_FROM_ADDRESS").status).toBe("fail");
   });
@@ -242,7 +242,7 @@ describe("validateProductionEnvironment (§36)", () => {
   it("warns on cookie/session consistency when APP_URL and AUTH_URL have different hosts", () => {
     const checks = validateProductionEnvironment({
       ...BASE_PRODUCTION_ENV,
-      AUTH_URL: "https://auth.clausebase.example.com",
+      AUTH_URL: "https://auth.senecial.example.com",
     });
     expect(findCheck(checks, "쿠키/세션(APP_URL vs AUTH_URL)").status).toBe("warn");
   });

@@ -18,7 +18,7 @@ export interface PasswordResetTemplateInput {
  */
 export function renderPasswordResetEmail(input: PasswordResetTemplateInput): RenderedEmail {
   const expiresAtText = input.expiresAt.toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
-  const subject = sanitizeEmailSubject("ClauseBase 비밀번호 재설정");
+  const subject = sanitizeEmailSubject("Senecial 비밀번호 재설정");
 
   const bodyHtml = `
     <p>안녕하세요,</p>

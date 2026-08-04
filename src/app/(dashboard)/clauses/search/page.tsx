@@ -12,7 +12,7 @@ import { searchOrgClauses } from "@/features/clauses/server/search-org-clauses";
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "조항 검색 | ClauseBase" };
+export const metadata: Metadata = { title: "조항 검색 | Senecial" };
 
 export default async function OrgClauseSearchPage({
   searchParams,

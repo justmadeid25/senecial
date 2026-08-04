@@ -254,16 +254,16 @@ function formatSummary(name: string, help: string, labelName: string, entries: [
 export function renderPrometheusMetrics(): string {
   const lines: string[] = [];
 
-  lines.push("# HELP clausebase_http_requests_total Total HTTP requests handled by instrumented routes.");
-  lines.push("# TYPE clausebase_http_requests_total counter");
+  lines.push("# HELP senecial_http_requests_total Total HTTP requests handled by instrumented routes.");
+  lines.push("# TYPE senecial_http_requests_total counter");
   for (const [key, count] of requestCounts) {
     const [route, status] = key.split(":");
-    lines.push(`clausebase_http_requests_total{route="${route}",status="${status}"} ${count}`);
+    lines.push(`senecial_http_requests_total{route="${route}",status="${status}"} ${count}`);
   }
 
   lines.push(
     ...formatSummary(
-      "clausebase_http_request_duration",
+      "senecial_http_request_duration",
       "HTTP request duration in milliseconds, per instrumented route.",
       "route",
       [...requestLatencies.entries()]
@@ -272,7 +272,7 @@ export function renderPrometheusMetrics(): string {
 
   lines.push(
     ...formatSummary(
-      "clausebase_dependency_duration",
+      "senecial_dependency_duration",
       "Downstream dependency call duration in milliseconds (db/redis/s3/mail).",
       "dependency",
       Object.entries(dependencyLatencies)
@@ -281,92 +281,92 @@ export function renderPrometheusMetrics(): string {
 
   lines.push(
     ...formatSummary(
-      "clausebase_batch_job_duration",
+      "senecial_batch_job_duration",
       "Batch job execution duration in milliseconds, per job name.",
       "job_name",
       [...batchDurations.entries()]
     )
   );
 
-  lines.push("# HELP clausebase_startup_duration_ms Time from process start to startup checks completing.");
-  lines.push("# TYPE clausebase_startup_duration_ms gauge");
-  lines.push(`clausebase_startup_duration_ms ${startupDurationMs ?? 0}`);
+  lines.push("# HELP senecial_startup_duration_ms Time from process start to startup checks completing.");
+  lines.push("# TYPE senecial_startup_duration_ms gauge");
+  lines.push(`senecial_startup_duration_ms ${startupDurationMs ?? 0}`);
 
-  lines.push("# HELP clausebase_ai_llm_prompt_tokens_total Total LLM prompt tokens consumed.");
-  lines.push("# TYPE clausebase_ai_llm_prompt_tokens_total counter");
-  lines.push(`clausebase_ai_llm_prompt_tokens_total ${promptTokensTotal}`);
-  lines.push("# HELP clausebase_ai_llm_completion_tokens_total Total LLM completion tokens generated.");
-  lines.push("# TYPE clausebase_ai_llm_completion_tokens_total counter");
-  lines.push(`clausebase_ai_llm_completion_tokens_total ${completionTokensTotal}`);
-  lines.push("# HELP clausebase_ai_llm_cost_usd_total Estimated cumulative LLM cost in USD.");
-  lines.push("# TYPE clausebase_ai_llm_cost_usd_total counter");
-  lines.push(`clausebase_ai_llm_cost_usd_total ${llmCostUsdTotal.toFixed(6)}`);
+  lines.push("# HELP senecial_ai_llm_prompt_tokens_total Total LLM prompt tokens consumed.");
+  lines.push("# TYPE senecial_ai_llm_prompt_tokens_total counter");
+  lines.push(`senecial_ai_llm_prompt_tokens_total ${promptTokensTotal}`);
+  lines.push("# HELP senecial_ai_llm_completion_tokens_total Total LLM completion tokens generated.");
+  lines.push("# TYPE senecial_ai_llm_completion_tokens_total counter");
+  lines.push(`senecial_ai_llm_completion_tokens_total ${completionTokensTotal}`);
+  lines.push("# HELP senecial_ai_llm_cost_usd_total Estimated cumulative LLM cost in USD.");
+  lines.push("# TYPE senecial_ai_llm_cost_usd_total counter");
+  lines.push(`senecial_ai_llm_cost_usd_total ${llmCostUsdTotal.toFixed(6)}`);
 
-  lines.push("# HELP clausebase_ai_llm_usage_by_provider LLM token/cost usage broken out by provider/model (never per-org/per-user).");
-  lines.push("# TYPE clausebase_ai_llm_usage_by_provider counter");
+  lines.push("# HELP senecial_ai_llm_usage_by_provider LLM token/cost usage broken out by provider/model (never per-org/per-user).");
+  lines.push("# TYPE senecial_ai_llm_usage_by_provider counter");
   for (const [label, entry] of llmUsageByProvider) {
-    lines.push(`clausebase_ai_llm_usage_by_provider_prompt_tokens{provider_model="${label}"} ${entry.promptTokens}`);
-    lines.push(`clausebase_ai_llm_usage_by_provider_completion_tokens{provider_model="${label}"} ${entry.completionTokens}`);
-    lines.push(`clausebase_ai_llm_usage_by_provider_cost_usd{provider_model="${label}"} ${entry.costUsd.toFixed(6)}`);
+    lines.push(`senecial_ai_llm_usage_by_provider_prompt_tokens{provider_model="${label}"} ${entry.promptTokens}`);
+    lines.push(`senecial_ai_llm_usage_by_provider_completion_tokens{provider_model="${label}"} ${entry.completionTokens}`);
+    lines.push(`senecial_ai_llm_usage_by_provider_cost_usd{provider_model="${label}"} ${entry.costUsd.toFixed(6)}`);
   }
 
-  lines.push("# HELP clausebase_ai_retrieval_hits_total Retrieval requests that found at least one citation-worthy result.");
-  lines.push("# TYPE clausebase_ai_retrieval_hits_total counter");
-  lines.push(`clausebase_ai_retrieval_hits_total ${retrievalHits}`);
-  lines.push("# HELP clausebase_ai_retrieval_misses_total Retrieval requests that found no usable result.");
-  lines.push("# TYPE clausebase_ai_retrieval_misses_total counter");
-  lines.push(`clausebase_ai_retrieval_misses_total ${retrievalMisses}`);
+  lines.push("# HELP senecial_ai_retrieval_hits_total Retrieval requests that found at least one citation-worthy result.");
+  lines.push("# TYPE senecial_ai_retrieval_hits_total counter");
+  lines.push(`senecial_ai_retrieval_hits_total ${retrievalHits}`);
+  lines.push("# HELP senecial_ai_retrieval_misses_total Retrieval requests that found no usable result.");
+  lines.push("# TYPE senecial_ai_retrieval_misses_total counter");
+  lines.push(`senecial_ai_retrieval_misses_total ${retrievalMisses}`);
 
-  lines.push("# HELP clausebase_ai_cache_hits_total Cache hits, per named cache (embedding/retrieval/prompt).");
-  lines.push("# TYPE clausebase_ai_cache_hits_total counter");
+  lines.push("# HELP senecial_ai_cache_hits_total Cache hits, per named cache (embedding/retrieval/prompt).");
+  lines.push("# TYPE senecial_ai_cache_hits_total counter");
   for (const [cacheName, count] of cacheHits) {
-    lines.push(`clausebase_ai_cache_hits_total{cache="${cacheName}"} ${count}`);
+    lines.push(`senecial_ai_cache_hits_total{cache="${cacheName}"} ${count}`);
   }
-  lines.push("# HELP clausebase_ai_cache_misses_total Cache misses, per named cache (embedding/retrieval/prompt).");
-  lines.push("# TYPE clausebase_ai_cache_misses_total counter");
+  lines.push("# HELP senecial_ai_cache_misses_total Cache misses, per named cache (embedding/retrieval/prompt).");
+  lines.push("# TYPE senecial_ai_cache_misses_total counter");
   for (const [cacheName, count] of cacheMisses) {
-    lines.push(`clausebase_ai_cache_misses_total{cache="${cacheName}"} ${count}`);
+    lines.push(`senecial_ai_cache_misses_total{cache="${cacheName}"} ${count}`);
   }
 
-  lines.push("# HELP clausebase_ai_vector_candidate_count Number of candidates a single vector search returned, before topK truncation.");
-  lines.push("# TYPE clausebase_ai_vector_candidate_count summary");
-  lines.push(`clausebase_ai_vector_candidate_count_count ${vectorCandidateCounts.count}`);
-  lines.push(`clausebase_ai_vector_candidate_count_sum ${vectorCandidateCounts.sum}`);
-  lines.push(`clausebase_ai_vector_candidate_count_max ${vectorCandidateCounts.max}`);
+  lines.push("# HELP senecial_ai_vector_candidate_count Number of candidates a single vector search returned, before topK truncation.");
+  lines.push("# TYPE senecial_ai_vector_candidate_count summary");
+  lines.push(`senecial_ai_vector_candidate_count_count ${vectorCandidateCounts.count}`);
+  lines.push(`senecial_ai_vector_candidate_count_sum ${vectorCandidateCounts.sum}`);
+  lines.push(`senecial_ai_vector_candidate_count_max ${vectorCandidateCounts.max}`);
 
-  lines.push("# HELP clausebase_ai_vector_fallback_total Vector searches that fell back from pgvector to the application provider.");
-  lines.push("# TYPE clausebase_ai_vector_fallback_total counter");
-  lines.push(`clausebase_ai_vector_fallback_total ${vectorFallbackTotal}`);
+  lines.push("# HELP senecial_ai_vector_fallback_total Vector searches that fell back from pgvector to the application provider.");
+  lines.push("# TYPE senecial_ai_vector_fallback_total counter");
+  lines.push(`senecial_ai_vector_fallback_total ${vectorFallbackTotal}`);
 
-  lines.push("# HELP clausebase_ai_vector_search_errors_total Vector searches that failed without falling back.");
-  lines.push("# TYPE clausebase_ai_vector_search_errors_total counter");
-  lines.push(`clausebase_ai_vector_search_errors_total ${vectorSearchErrorsTotal}`);
+  lines.push("# HELP senecial_ai_vector_search_errors_total Vector searches that failed without falling back.");
+  lines.push("# TYPE senecial_ai_vector_search_errors_total counter");
+  lines.push(`senecial_ai_vector_search_errors_total ${vectorSearchErrorsTotal}`);
 
-  lines.push("# HELP clausebase_ai_vector_backfill_processed_total Rows processed by the vector-backfill CLI across this process's runs.");
-  lines.push("# TYPE clausebase_ai_vector_backfill_processed_total counter");
-  lines.push(`clausebase_ai_vector_backfill_processed_total ${vectorBackfillProcessedTotal}`);
+  lines.push("# HELP senecial_ai_vector_backfill_processed_total Rows processed by the vector-backfill CLI across this process's runs.");
+  lines.push("# TYPE senecial_ai_vector_backfill_processed_total counter");
+  lines.push(`senecial_ai_vector_backfill_processed_total ${vectorBackfillProcessedTotal}`);
 
-  lines.push("# HELP clausebase_ai_stale_embedding_count Embeddings whose dimension can never populate the native pgvector column (last-measured).");
-  lines.push("# TYPE clausebase_ai_stale_embedding_count gauge");
-  lines.push(`clausebase_ai_stale_embedding_count ${staleEmbeddingCount}`);
+  lines.push("# HELP senecial_ai_stale_embedding_count Embeddings whose dimension can never populate the native pgvector column (last-measured).");
+  lines.push("# TYPE senecial_ai_stale_embedding_count gauge");
+  lines.push(`senecial_ai_stale_embedding_count ${staleEmbeddingCount}`);
 
-  lines.push("# HELP clausebase_ai_context_truncation_total Requests whose citation list was truncated to fit the context budget.");
-  lines.push("# TYPE clausebase_ai_context_truncation_total counter");
-  lines.push(`clausebase_ai_context_truncation_total ${contextTruncationTotal}`);
+  lines.push("# HELP senecial_ai_context_truncation_total Requests whose citation list was truncated to fit the context budget.");
+  lines.push("# TYPE senecial_ai_context_truncation_total counter");
+  lines.push(`senecial_ai_context_truncation_total ${contextTruncationTotal}`);
 
-  lines.push("# HELP clausebase_ai_latency_budget_exceeded_total Dependency calls that exceeded their named per-operation latency budget.");
-  lines.push("# TYPE clausebase_ai_latency_budget_exceeded_total counter");
+  lines.push("# HELP senecial_ai_latency_budget_exceeded_total Dependency calls that exceeded their named per-operation latency budget.");
+  lines.push("# TYPE senecial_ai_latency_budget_exceeded_total counter");
   for (const [operation, count] of latencyBudgetExceededTotal) {
-    lines.push(`clausebase_ai_latency_budget_exceeded_total{operation="${operation}"} ${count}`);
+    lines.push(`senecial_ai_latency_budget_exceeded_total{operation="${operation}"} ${count}`);
   }
 
-  lines.push("# HELP clausebase_ai_concurrent_requests Current in-flight AI requests, process-wide.");
-  lines.push("# TYPE clausebase_ai_concurrent_requests gauge");
-  lines.push(`clausebase_ai_concurrent_requests ${aiConcurrentRequests}`);
+  lines.push("# HELP senecial_ai_concurrent_requests Current in-flight AI requests, process-wide.");
+  lines.push("# TYPE senecial_ai_concurrent_requests gauge");
+  lines.push(`senecial_ai_concurrent_requests ${aiConcurrentRequests}`);
 
-  lines.push("# HELP clausebase_ai_cache_stampede_joined_total Requests that joined an in-flight single-flight computation instead of recomputing.");
-  lines.push("# TYPE clausebase_ai_cache_stampede_joined_total counter");
-  lines.push(`clausebase_ai_cache_stampede_joined_total ${cacheStampedeJoinedTotal}`);
+  lines.push("# HELP senecial_ai_cache_stampede_joined_total Requests that joined an in-flight single-flight computation instead of recomputing.");
+  lines.push("# TYPE senecial_ai_cache_stampede_joined_total counter");
+  lines.push(`senecial_ai_cache_stampede_joined_total ${cacheStampedeJoinedTotal}`);
 
   return lines.join("\n") + "\n";
 }

@@ -17,7 +17,7 @@ import { computeChecksum } from "@/server/storage/checksum";
  * set, so this file adds no live-infra requirement to the base suite. To
  * run for real:
  *
- *   TEST_S3_ENDPOINT=http://localhost:9010 TEST_S3_BUCKET=clausebase-contracts-test \
+ *   TEST_S3_ENDPOINT=http://localhost:9010 TEST_S3_BUCKET=senecial-contracts-test \
  *   TEST_S3_ACCESS_KEY_ID=... TEST_S3_SECRET_ACCESS_KEY=... \
  *   pnpm exec dotenv -e .env.test -- vitest run tests/integration/s3-storage-real.test.ts
  */
@@ -62,7 +62,7 @@ describe.skipIf(!hasS3Config)("S3CompatibleStorageDriver against real S3-compati
 
   it("put() then getBuffer() returns byte-identical content with a matching checksum", async () => {
     const key = testKey();
-    const data = Buffer.from(`clausebase real S3 integration test ${randomUUID()}`);
+    const data = Buffer.from(`senecial real S3 integration test ${randomUUID()}`);
     const expectedChecksum = computeChecksum(data);
 
     const stored = await driver.put({ key, data, mimeType: "application/pdf" });

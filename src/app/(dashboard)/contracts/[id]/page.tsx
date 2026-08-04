@@ -24,7 +24,7 @@ import { formatDateKst, formatDateTimeKst } from "@/lib/format/date";
 import { formatAmount } from "@/lib/format/money";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "계약 상세 | ClauseBase" };
+export const metadata: Metadata = { title: "계약 상세 | Senecial" };
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

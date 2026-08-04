@@ -17,7 +17,7 @@ function num(value: number): string {
  */
 export function renderEvaluationReportMarkdown(report: EvaluationReport): string {
   const lines: string[] = [];
-  lines.push("# ClauseBase AI 평가 리포트 (Phase 12 Part L)");
+  lines.push("# Senecial AI 평가 리포트 (Phase 12 Part L)");
   lines.push("");
   lines.push(`- 생성 시각: ${report.generatedAt}`);
   lines.push(`- Dataset Version: ${report.datasetVersion}`);
@@ -114,7 +114,7 @@ export interface EvaluationComparisonEntry {
  */
 export function renderEvaluationComparisonMarkdown(entries: readonly EvaluationComparisonEntry[]): string {
   const lines: string[] = [];
-  lines.push("# ClauseBase AI 평가 비교 리포트 (Phase 12.1 §19 - provider 간 비교)");
+  lines.push("# Senecial AI 평가 비교 리포트 (Phase 12.1 §19 - provider 간 비교)");
   lines.push("");
   lines.push(`- 생성 시각: ${new Date().toISOString()}`);
   lines.push(`- Dataset Version: ${entries[0]?.report.datasetVersion ?? "(unknown)"}`);

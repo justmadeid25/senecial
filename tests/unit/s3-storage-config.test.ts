@@ -7,7 +7,7 @@ import { loadS3Config, resolveS3Config, validateS3Config } from "@/lib/config/s3
 
 describe("isValidBucketName (§3)", () => {
   it("accepts a well-formed bucket name", () => {
-    expect(isValidBucketName("clausebase-prod-contracts")).toBe(true);
+    expect(isValidBucketName("senecial-prod-contracts")).toBe(true);
     expect(isValidBucketName("abc")).toBe(true);
   });
 
@@ -16,12 +16,12 @@ describe("isValidBucketName (§3)", () => {
   });
 
   it("rejects uppercase letters", () => {
-    expect(isValidBucketName("Clausebase-Bucket")).toBe(false);
+    expect(isValidBucketName("Senecial-Bucket")).toBe(false);
   });
 
   it("rejects a name that starts or ends with a hyphen/dot", () => {
-    expect(isValidBucketName("-clausebase")).toBe(false);
-    expect(isValidBucketName("clausebase-")).toBe(false);
+    expect(isValidBucketName("-senecial")).toBe(false);
+    expect(isValidBucketName("senecial-")).toBe(false);
   });
 
   it("rejects consecutive dots", () => {
@@ -90,7 +90,7 @@ describe("loadS3Config / validateS3Config / resolveS3Config (§3/§9)", () => {
   it("validateS3Config fails when a KMS key is set without aws:kms encryption mode", () => {
     const result = validateS3Config({
       region: "us-east-1",
-      bucket: "clausebase-contracts",
+      bucket: "senecial-contracts",
       kmsKeyId: "arn:aws:kms:us-east-1:111111111111:key/abc",
       serverSideEncryption: "AES256",
     });
@@ -98,7 +98,7 @@ describe("loadS3Config / validateS3Config / resolveS3Config (§3/§9)", () => {
   });
 
   it("validateS3Config passes without accessKeyId/secretAccessKey set (IAM role / workload identity chain)", () => {
-    const result = validateS3Config({ region: "us-east-1", bucket: "clausebase-contracts" });
+    const result = validateS3Config({ region: "us-east-1", bucket: "senecial-contracts" });
     expect(result.valid).toBe(true);
   });
 
@@ -119,12 +119,12 @@ describe("loadS3Config / validateS3Config / resolveS3Config (§3/§9)", () => {
     const config = resolveS3Config(
       env({
         S3_REGION: "us-east-1",
-        S3_BUCKET: "clausebase-contracts",
+        S3_BUCKET: "senecial-contracts",
         S3_FORCE_PATH_STYLE: "true",
       })
     );
     expect(config.region).toBe("us-east-1");
-    expect(config.bucket).toBe("clausebase-contracts");
+    expect(config.bucket).toBe("senecial-contracts");
     expect(config.forcePathStyle).toBe(true);
   });
 });

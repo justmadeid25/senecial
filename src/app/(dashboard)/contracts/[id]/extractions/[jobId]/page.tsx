@@ -22,7 +22,7 @@ import { formatAmount } from "@/lib/format/money";
 import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
-export const metadata: Metadata = { title: "추출 결과 검토 | ClauseBase" };
+export const metadata: Metadata = { title: "추출 결과 검토 | Senecial" };
 
 function currentValueDisplay(fieldKey: ContractExtractableField, contract: ContractDetail): string {
   switch (fieldKey) {

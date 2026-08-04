@@ -81,9 +81,9 @@ LIMIT 50;
 ### cron (worker 컨테이너/VM)
 
 ```cron
-0 2 * * * cd /app && pnpm notifications:generate >> /var/log/clausebase/notifications.log 2>&1
-0 * * * * cd /app && pnpm files:reconcile >> /var/log/clausebase/reconcile.log 2>&1
-*/2 * * * * cd /app && pnpm extraction:process --limit=20 >> /var/log/clausebase/extraction.log 2>&1
+0 2 * * * cd /app && pnpm notifications:generate >> /var/log/senecial/notifications.log 2>&1
+0 * * * * cd /app && pnpm files:reconcile >> /var/log/senecial/reconcile.log 2>&1
+*/2 * * * * cd /app && pnpm extraction:process --limit=20 >> /var/log/senecial/extraction.log 2>&1
 ```
 
 ### GitHub Actions (스케줄 워크플로)
