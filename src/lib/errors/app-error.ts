@@ -82,6 +82,22 @@ export class RateLimitError extends AppError {
 }
 
 /**
+ * §Phase 12.2 Part E (§33 AI concurrency limit) - distinct from
+ * RateLimitError: there is no fixed `resetAt` (a concurrency slot frees up
+ * whenever ANY in-flight request finishes, not on a time window), so this
+ * carries `limit` only, not a reset time.
+ */
+export class ConcurrencyLimitError extends AppError {
+  readonly limit: number;
+
+  constructor(limit: number, message = "동시에 처리 중인 AI 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.") {
+    super("CONCURRENCY_LIMITED", message, 429);
+    this.name = "ConcurrencyLimitError";
+    this.limit = limit;
+  }
+}
+
+/**
  * Converts any thrown value into a message safe to return to the client.
  * Unknown/internal errors are collapsed into a generic message so stack
  * traces and internal details never reach the user.

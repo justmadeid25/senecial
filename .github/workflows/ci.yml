@@ -33,7 +33,12 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18-alpine
+        # §Phase 12.2 - pgvector/pgvector:pg18 (official pgvector project
+        # image, PostgreSQL 18 with the vector extension pre-installed) -
+        # plain postgres:18-alpine cannot run the pgvector_clause_embeddings
+        # migration's `CREATE EXTENSION vector`. Same PostgreSQL major
+        # version as before, just with the extension available.
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_DB: clausebase_test
           POSTGRES_USER: clausebase
@@ -97,7 +102,12 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18-alpine
+        # §Phase 12.2 - pgvector/pgvector:pg18 (official pgvector project
+        # image, PostgreSQL 18 with the vector extension pre-installed) -
+        # plain postgres:18-alpine cannot run the pgvector_clause_embeddings
+        # migration's `CREATE EXTENSION vector`. Same PostgreSQL major
+        # version as before, just with the extension available.
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_DB: clausebase_migration_check
           POSTGRES_USER: clausebase
@@ -132,6 +142,14 @@ jobs:
         # 1 = a real command error. `--from-config-datasource` diffs against
         # the database this job just ran `prisma migrate deploy` on above.
         run: pnpm exec prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --script --exit-code
+      # §Phase 12.3 Part A (§4) - runs against the PRISTINE database this
+      # job just built from scratch via `migrate deploy` above - the
+      # strongest possible check that the full migration history (extension/
+      # HNSW index/core columns included) is self-sufficient, never
+      # dependent on manual post-migration steps a fresh deployment would
+      # never get.
+      - name: Verify migrations (checksums, extension, HNSW index, core columns)
+        run: pnpm db:verify-migrations
 
   # §17 item 9 - build the production Dockerfile on every PR (build only,
   # never pushed here - see docker.yml for the push-on-merge job). Never
@@ -192,12 +210,23 @@ jobs:
   # §18 - E2E is a separate job (own service containers, own long-running
   # Playwright browser install) so a slow/flaky UI test never blocks the
   # fast unit/integration feedback loop above.
+  #
+  # §Phase 12.3 Part B (§5) - this is the FAST `next dev`-based suite,
+  # useful as quick PR feedback - it is NOT the release gate (§20's own
+  # explicit instruction: "next dev 기반 전체 E2E는 release 필수 gate로
+  # 사용하지 마십시오"). See the `e2e-production-like` job below for the
+  # actual release-blocking E2E check (real `next build` + `next start`).
   e2e:
-    name: E2E (Playwright)
+    name: E2E (Playwright, next dev - fast PR feedback only, not release gate)
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18-alpine
+        # §Phase 12.2 - pgvector/pgvector:pg18 (official pgvector project
+        # image, PostgreSQL 18 with the vector extension pre-installed) -
+        # plain postgres:18-alpine cannot run the pgvector_clause_embeddings
+        # migration's `CREATE EXTENSION vector`. Same PostgreSQL major
+        # version as before, just with the extension available.
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_DB: clausebase_test
           POSTGRES_USER: clausebase
@@ -262,8 +291,8 @@ jobs:
         # re-downloading browsers but Playwright itself checks the cache
         # dir and no-ops quickly when a hit already has everything.
         run: pnpm exec playwright install --with-deps chromium
-      - name: Run E2E suite
-        run: pnpm test:e2e
+      - name: Run E2E suite (fast, next dev)
+        run: pnpm test:e2e:dev
       # §18 - never upload a raw server log or trace without checking it
       # first: this repo's own logging never prints tokens/passwords/full
       # emails (see src/domain/logging), and Playwright traces never
@@ -278,3 +307,196 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # §Phase 12.3 Part B/G (§5/§20) - the ACTUAL release-blocking E2E check:
+  # real `next build` + `next start` (NODE_ENV=production, the genuine
+  # production server code path - never Turbopack's `next dev` dev-compiler
+  # workers, the confirmed-but-not-fully-root-caused source of the crashes
+  # found in Phase 12.2 - see docs/operations/e2e-testing.md). Real Redis
+  # (not memory) for the concurrency limiter/distributed lock/cache
+  # provider - doubles as CI coverage for Phase 12.3 Part D.
+  e2e-production-like:
+    name: E2E (production-like, next start) - RELEASE GATE
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: clausebase_e2e
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_e2e?schema=public
+      AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
+      REDIS_URL: redis://localhost:6379
+      FILE_STORAGE_DRIVER: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Run production-like E2E suite (next build + next start)
+        run: pnpm test:e2e:prod
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-production-like
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  # §Phase 12.2 Part H (§41) - `pnpm ai:evaluate --compare --gate` blocks the
+  # merge on any AI quality/security regression against the Phase 12.1
+  # baseline (domain/ai/evaluation/release-gate.ts) - both the pgvector AND
+  # application provider paths must pass (§28 - a fallback path that can't
+  # meet baseline quality must not be trusted in production either).
+  ai-quality-gate:
+    name: AI quality gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: clausebase_test
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+      AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm exec prisma migrate deploy
+      # §Phase 12.3 Part G (§20) - the release gate runs the migration
+      # verifier BEFORE the AI evaluation gate - a broken/drifted migration
+      # (missing pgvector extension, missing HNSW index) should fail loud
+      # and fast, never silently degrade AI evaluation quality numbers in a
+      # way that's hard to attribute back to its real cause.
+      - name: Verify migrations
+        run: pnpm db:verify-migrations
+      - name: AI evaluation release gate (application + pgvector, provider-stratified baseline)
+        run: pnpm ai:evaluate --compare --gate
+      # §26 - the JSON report is the CI-consumable form (evaluateReleaseGate()'s
+      # exact violations, not just the console summary) - uploaded always,
+      # not only on failure, since it's also the quality record for a
+      # PASSING run. Contains only metrics/scores/synthetic golden-dataset
+      # text - never a real credential or contract.
+      - name: Upload evaluation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-evaluation-reports
+          path: reports/ai-evaluation-*.json
+          retention-days: 30
+
+  # §Phase 12.2 Part H (§41 e2e-determinism-smoke) - a SMALL-scale flake
+  # check on every PR (§39's full 10-run/30-run passes belong in a nightly
+  # job, not blocking every PR) - runs the repeat-runner against the
+  # fastest representative spec so a newly-introduced flake is caught
+  # before merge, without materially slowing down CI.
+  e2e-determinism-smoke:
+    name: E2E determinism smoke (repeat-runner)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: clausebase_test
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_e2e?schema=public
+      AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
+      AUTH_URL: http://localhost:3000
+      APP_URL: http://localhost:3000
+      FILE_STORAGE_DRIVER: local
+      RATE_LIMITER: redis
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm exec playwright install --with-deps chromium
+      # §42 Flake 정책 - this job does NOT retry on failure by itself; a
+      # failing run here means "this spec was flaky N times in a row",
+      # which is exactly the signal §7/§8 exist to surface, not something
+      # to paper over with a blind CI-level retry.
+      - name: Repeat-run a representative spec (flake detection)
+        run: pnpm test:e2e:repeat --runs=3 --spec=tests/e2e/auth-flow.spec.ts
+      - name: Upload flake report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-repeat-report
+          path: |
+            reports/e2e-repeat-report.json
+            reports/e2e-repeat-report.md
+          retention-days: 30

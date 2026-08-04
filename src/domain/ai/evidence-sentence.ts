@@ -2,7 +2,7 @@ import { cosineSimilarity } from "./cosine-similarity";
 import { computeHashingTrickEmbedding } from "./hashing-trick-embedding";
 import { extractKeywords, KEYWORD_STEM_LENGTH } from "./keyword-extraction";
 
-const MAX_EVIDENCE_LENGTH = 500;
+export const MAX_EVIDENCE_LENGTH = 500;
 const SENTENCE_SCORING_DIMENSION = 128;
 const KEYWORD_WEIGHT = 0.5;
 const TRIGRAM_WEIGHT = 0.5;

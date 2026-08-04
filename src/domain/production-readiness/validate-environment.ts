@@ -41,12 +41,34 @@ export function validateProductionEnvironment(env: NodeJS.ProcessEnv): Readiness
     checks.push({ name: "AUTH_SECRET", status: "pass", detail: `길이 ${authSecret.length}자` });
   }
 
+  // §Phase 12.3 Part B (§5/§6) - `ALLOW_HTTP_IN_PRODUCTION_TESTING=true` is
+  // the ONLY override in this whole checklist that is never valid for a
+  // real deployment (unlike every other ALLOW_* flag above/below, which
+  // trade a real feature for a noop/dev driver) - it exists solely so
+  // `NODE_ENV=production` (which `next start`/the standalone `server.js`
+  // both require to exercise Next.js's actual production server code
+  // path, not `next dev`'s Turbopack dev-compiler) can be tested against
+  // a local loopback HTTP server (`http://127.0.0.1:PORT` - a real TLS
+  // cert is architecturally unavailable for a throwaway local test
+  // server) - see scripts/e2e-prod-server.ts / docs/operations/
+  // e2e-testing.md's "Production-like E2E" section. Same "explicit,
+  // logged, opt-in only" shape as every other override here - never the
+  // default, never silent.
+  const allowHttpInProductionTesting = env.ALLOW_HTTP_IN_PRODUCTION_TESTING === "true";
   for (const varName of ["APP_URL", "AUTH_URL"]) {
     const value = env[varName];
     if (!value) {
       checks.push({ name: varName, status: "fail", detail: "설정되지 않음" });
     } else if (!value.startsWith("https://")) {
-      checks.push({ name: varName, status: "fail", detail: "HTTPS URL이 아님 (운영 환경은 HTTPS 필수)" });
+      if (allowHttpInProductionTesting) {
+        checks.push({
+          name: varName,
+          status: "warn",
+          detail: "HTTPS URL이 아님 - ALLOW_HTTP_IN_PRODUCTION_TESTING=true로 명시적으로 허용됨 (실제 배포에는 사용 금지)",
+        });
+      } else {
+        checks.push({ name: varName, status: "fail", detail: "HTTPS URL이 아님 (운영 환경은 HTTPS 필수)" });
+      }
     } else {
       checks.push({ name: varName, status: "pass", detail: "HTTPS" });
     }

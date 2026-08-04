@@ -161,7 +161,12 @@ export async function generateAiClauseReview(params: {
   const llmStart = performance.now();
   const completion = await llm.generateCompletion(messages);
   recordDependencyLatency("llm", performance.now() - llmStart);
-  recordLlmUsage({ promptTokens: completion.usage.promptTokens, completionTokens: completion.usage.completionTokens });
+  recordLlmUsage({
+    promptTokens: completion.usage.promptTokens,
+    completionTokens: completion.usage.completionTokens,
+    provider: llm.providerName,
+    model: llm.modelName,
+  });
 
   assertEveryParagraphHasCitation(completion.text, citations);
   assertNoRiskJudgmentLanguage(completion.text);

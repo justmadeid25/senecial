@@ -1,4 +1,5 @@
 import type { EvaluationReport } from "./evaluation-report";
+import { evaluateReleaseGate } from "./release-gate";
 
 function pct(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -19,6 +20,8 @@ export function renderEvaluationReportMarkdown(report: EvaluationReport): string
   lines.push("# ClauseBase AI 평가 리포트 (Phase 12 Part L)");
   lines.push("");
   lines.push(`- 생성 시각: ${report.generatedAt}`);
+  lines.push(`- Dataset Version: ${report.datasetVersion}`);
+  lines.push(`- AI Config Version: ${report.aiConfigVersion} (checksum: ${report.aiConfigChecksum})`);
   lines.push(`- Vector Search Provider: ${report.vectorSearchProvider}`);
   lines.push(`- Embedding Provider: ${report.embeddingProvider}`);
   lines.push(`- LLM Provider: ${report.llmProvider}`);
@@ -42,6 +45,43 @@ export function renderEvaluationReportMarkdown(report: EvaluationReport): string
   lines.push(`| Hallucination Rate (응답해서는 안 될 때 응답한 비율) | ${pct(report.summary.hallucinationRate)} |`);
   lines.push(`| False Refusal Rate (응답 가능한데 거절한 비율) | ${pct(report.summary.falseRefusalRate)} |`);
   lines.push(`| Citation Validity Rate (모든 문단에 유효한 출처 표시가 있었던 비율) | ${pct(report.summary.citationValidityRate)} |`);
+  lines.push("");
+
+  lines.push("## 보안 검사");
+  lines.push("");
+  lines.push(`- Tenant Isolation (cross-org 유출): ${report.security.crossOrgLeakageDetected ? "⚠ 실패" : "정상"}`);
+  lines.push(`- Risk-Language Guard: ${report.security.riskLanguageGuardViolated ? "⚠ 위반" : "정상"}`);
+  lines.push(`- Prompt Injection 방어: ${report.security.promptInjectionCompromised ? "⚠ 우회됨" : "정상"}`);
+  lines.push("");
+
+  lines.push("## Release Gate (Phase 12.2 §25, Phase 12.3 §18 provider-stratified)");
+  lines.push("");
+  const gate = evaluateReleaseGate(report);
+  lines.push(`- 적용된 baseline: ${gate.baselineUsed}`);
+  lines.push(`- 판정: ${gate.passed ? "PASS" : "FAIL"}`);
+  if (!gate.passed) {
+    lines.push("- 위반 항목:");
+    for (const violation of gate.violations) {
+      lines.push(`  - \`${violation.code}\`: ${violation.message}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("## Phrasing 유형별 False Refusal (Phase 12.3 §17)");
+  lines.push("");
+  lines.push("| phrasingType | 질문 수 | False Refusal 수 | 비율 |");
+  lines.push("| --- | --- | --- | --- |");
+  const byPhrasing = new Map<string, { total: number; falselyRefused: number }>();
+  for (const q of report.perQuestion) {
+    if (q.expectRefusal) continue; // offTopic fixtures are supposed to refuse - not part of this breakdown
+    const entry = byPhrasing.get(q.phrasingType) ?? { total: 0, falselyRefused: 0 };
+    entry.total += 1;
+    if (q.falselyRefused) entry.falselyRefused += 1;
+    byPhrasing.set(q.phrasingType, entry);
+  }
+  for (const [phrasingType, entry] of byPhrasing) {
+    lines.push(`| ${phrasingType} | ${entry.total} | ${entry.falselyRefused} | ${pct(entry.total === 0 ? 0 : entry.falselyRefused / entry.total)} |`);
+  }
   lines.push("");
 
   lines.push("## 질문별 상세");
@@ -77,6 +117,7 @@ export function renderEvaluationComparisonMarkdown(entries: readonly EvaluationC
   lines.push("# ClauseBase AI 평가 비교 리포트 (Phase 12.1 §19 - provider 간 비교)");
   lines.push("");
   lines.push(`- 생성 시각: ${new Date().toISOString()}`);
+  lines.push(`- Dataset Version: ${entries[0]?.report.datasetVersion ?? "(unknown)"}`);
   lines.push(`- 질문 수: ${entries[0]?.report.summary.questionCount ?? 0}`);
   lines.push("");
 
@@ -93,6 +134,7 @@ export function renderEvaluationComparisonMarkdown(entries: readonly EvaluationC
     ["Hallucination Rate", (e) => pct(e.report.summary.hallucinationRate)],
     ["False Refusal Rate", (e) => pct(e.report.summary.falseRefusalRate)],
     ["Citation Validity Rate", (e) => pct(e.report.summary.citationValidityRate)],
+    ["Release Gate", (e) => (evaluateReleaseGate(e.report).passed ? "PASS" : "FAIL")],
     ["총 소요시간 (ms)", (e) => e.totalElapsedMs.toFixed(0)],
   ];
   for (const [label, fn] of rows) {

@@ -1241,6 +1241,24 @@ model Message {
   content        String
   createdAt      DateTime         @default(now())
 
+  /**
+   * §Phase 12.2 Part C (§22) - AI response provenance: which
+   * AiRuntimeConfiguration (domain/ai/ai-runtime-configuration.ts)
+   * produced this specific ASSISTANT message. Always null for USER
+   * messages (no AI config applies to a question) and for any message
+   * persisted before this Phase - never backfilled retroactively, since
+   * the config that actually ran a past message is not reconstructible
+   * after the fact. `retrieval result IDs` per §22 are already covered by
+   * this message's own `citations` (MessageCitation.contractClauseId) -
+   * not duplicated here.
+   */
+  aiConfigVersion          String?
+  aiConfigChecksum         String?
+  embeddingVersion         String?
+  vectorSearchProvider     String?
+  promptTemplateVersion    String?
+  citationValidatorVersion String?
+
   conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   citations    MessageCitation[]

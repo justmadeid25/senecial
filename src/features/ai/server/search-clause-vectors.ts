@@ -1,8 +1,23 @@
 import type { ClauseVectorSearchCandidate, ClauseVectorSearchParams } from "@/domain/ai/clause-vector-search-provider";
+import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
 import { getLogger } from "@/server/logging";
-import { recordDependencyLatency, recordVectorCandidateCount, recordVectorFallback, recordVectorSearchError } from "@/server/monitoring/metrics";
+import {
+  recordDependencyLatency,
+  recordLatencyBudgetExceeded,
+  recordVectorCandidateCount,
+  recordVectorFallback,
+  recordVectorSearchError,
+} from "@/server/monitoring/metrics";
 import { ApplicationCosineClauseSearchProvider } from "@/server/services/ai/vector-search/application-cosine-clause-search-provider";
 import { getClauseVectorSearchProvider } from "@/server/services/ai/vector-search/get-clause-vector-search-provider";
+
+function checkVectorSearchBudget(durationMs: number): void {
+  // Always a real DB-native or in-process cosine scan (never a "development"
+  // fake API) - never provider-gated, unlike embedding/llm budgets.
+  if (exceedsLatencyBudget("vectorSearch", durationMs, false)) {
+    recordLatencyBudgetExceeded("vectorSearch");
+  }
+}
 
 /**
  * §Phase 12.1 Part 12 (Fallback 정책) - the single entry point every
@@ -23,7 +38,9 @@ export async function searchClauseVectors(params: ClauseVectorSearchParams): Pro
 
   try {
     const results = await provider.search(params);
-    recordDependencyLatency("vectorSearch", performance.now() - start);
+    const durationMs = performance.now() - start;
+    recordDependencyLatency("vectorSearch", durationMs);
+    checkVectorSearchBudget(durationMs);
     recordVectorCandidateCount(results.length);
     return results;
   } catch (error) {
@@ -39,7 +56,9 @@ export async function searchClauseVectors(params: ClauseVectorSearchParams): Pro
 
     const fallbackStart = performance.now();
     const results = await new ApplicationCosineClauseSearchProvider().search(params);
-    recordDependencyLatency("vectorSearch", performance.now() - fallbackStart);
+    const fallbackDurationMs = performance.now() - fallbackStart;
+    recordDependencyLatency("vectorSearch", fallbackDurationMs);
+    checkVectorSearchBudget(fallbackDurationMs);
     recordVectorCandidateCount(results.length);
     return results;
   }

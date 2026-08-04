@@ -6,6 +6,9 @@ import { renderEvaluationReportMarkdown } from "@/domain/ai/evaluation/evaluatio
 function buildFixtureReport(): EvaluationReport {
   return {
     generatedAt: "2026-08-03T00:00:00.000Z",
+    datasetVersion: "v2",
+    aiConfigVersion: "12.2.0",
+    aiConfigChecksum: "fixturechecksum01",
     vectorSearchProvider: "pgvector",
     embeddingProvider: "development/hashing-trick-v1",
     llmProvider: "development/extractive-summary-v1",
@@ -21,11 +24,17 @@ function buildFixtureReport(): EvaluationReport {
       falseRefusalRate: 0,
       citationValidityRate: 1,
     },
+    security: {
+      crossOrgLeakageDetected: false,
+      riskLanguageGuardViolated: false,
+      promptInjectionCompromised: false,
+    },
     perQuestion: [
       {
         id: "q1",
         question: "계약을 해지하려면 어떻게 해야 하나요?",
         expectRefusal: false,
+        phrasingType: "direct",
         relevantClauseCount: 1,
         retrievedCount: 3,
         recall: 1,
@@ -42,6 +51,7 @@ function buildFixtureReport(): EvaluationReport {
         id: "q8",
         question: "오늘 서울 날씨는 어떤가요?",
         expectRefusal: true,
+        phrasingType: "offTopic",
         relevantClauseCount: 0,
         retrievedCount: 0,
         recall: 1,

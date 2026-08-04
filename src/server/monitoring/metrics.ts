@@ -58,12 +58,37 @@ const cacheMisses = new Map<string, number>();
 let retrievalHits = 0;
 let retrievalMisses = 0;
 
+/**
+ * §Phase 12.2 Part E (§31) - the SAME totals as above, additionally broken
+ * out by `provider/model` (never organizationId/conversationId/userId -
+ * §31's own "metrics label에 organizationId를 직접 넣지 마십시오";
+ * per-organization cost belongs in a DB-backed aggregate instead, see
+ * docs/operations/ai-platform.md's "Known limitations" - not implemented
+ * this phase). `provider/model` alone is low-cardinality and safe (a
+ * handful of configured values, never per-request/per-user data).
+ */
+interface LlmUsageByProviderEntry {
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+}
+const llmUsageByProvider = new Map<string, LlmUsageByProviderEntry>();
+
 /** Phase 12.1 Part 14 - vector-search-specific counters/gauges. `staleEmbeddingCount` is a gauge (last-measured snapshot, e.g. from the backfill CLI or a scan), everything else is a running counter. */
 const vectorCandidateCounts = newSummary();
 let vectorFallbackTotal = 0;
 let vectorSearchErrorsTotal = 0;
 let vectorBackfillProcessedTotal = 0;
 let staleEmbeddingCount = 0;
+
+/** §Phase 12.2 Part E - context/token budget enforcement counters (domain/ai/context-budget.ts). */
+let contextTruncationTotal = 0;
+/** §Phase 12.2 Part E - per-operation latency budget violations, keyed by the same dependency names as dependencyLatencies above (a stricter bar than SLOW_THRESHOLD_MS - see domain/ai/latency-budget.ts). */
+const latencyBudgetExceededTotal = new Map<string, number>();
+/** §Phase 12.2 Part E (§33 concurrency) - current in-flight AI requests, process-wide. A gauge, not a counter. */
+let aiConcurrentRequests = 0;
+/** §Phase 12.2 Part F (§35 stampede) - single-flight lock acquisitions that had to wait for an in-flight leader instead of computing themselves. */
+let cacheStampedeJoinedTotal = 0;
 
 function logIfSlow(operation: string, durationMs: number, extra?: Record<string, string | number>): void {
   if (durationMs > SLOW_THRESHOLD_MS) {
@@ -112,12 +137,35 @@ export function setStaleEmbeddingCount(count: number): void {
   staleEmbeddingCount = count;
 }
 
-/** Phase 12 Part L - accumulates LLM token usage/estimated cost across every generateCompletion() call (see server/services/ai's LLM providers) - never per-conversation, only a running process-wide total (§Monitoring's "Tokens"/"Cost"). */
-export function recordLlmUsage(usage: { promptTokens: number; completionTokens: number; costUsd?: number }): void {
+/**
+ * Phase 12 Part L, extended §Phase 12.2 Part E (§31) - accumulates LLM
+ * token usage/estimated cost across every generateCompletion() call (see
+ * server/services/ai's LLM providers) - never per-conversation, only a
+ * running process-wide total (§Monitoring's "Tokens"/"Cost"), PLUS the
+ * same numbers broken out by provider/model when given (optional -
+ * existing call sites that don't pass it just keep updating the
+ * unlabeled totals, so this is purely additive).
+ */
+export function recordLlmUsage(usage: {
+  promptTokens: number;
+  completionTokens: number;
+  costUsd?: number;
+  provider?: string;
+  model?: string;
+}): void {
   promptTokensTotal += usage.promptTokens;
   completionTokensTotal += usage.completionTokens;
   if (usage.costUsd !== undefined) {
     llmCostUsdTotal += usage.costUsd;
+  }
+
+  if (usage.provider && usage.model) {
+    const label = `${usage.provider}/${usage.model}`;
+    const entry = llmUsageByProvider.get(label) ?? { promptTokens: 0, completionTokens: 0, costUsd: 0 };
+    entry.promptTokens += usage.promptTokens;
+    entry.completionTokens += usage.completionTokens;
+    entry.costUsd += usage.costUsd ?? 0;
+    llmUsageByProvider.set(label, entry);
   }
 }
 
@@ -134,6 +182,29 @@ export function recordRetrievalHit(hit: boolean): void {
 export function recordCacheEvent(cacheName: string, hit: boolean): void {
   const map = hit ? cacheHits : cacheMisses;
   map.set(cacheName, (map.get(cacheName) ?? 0) + 1);
+}
+
+/** §Phase 12.2 Part E - a context list was truncated to fit CONTEXT_MAX_CLAUSES (domain/ai/context-budget.ts). Never logs the dropped content, only that truncation happened. */
+export function recordContextTruncation(): void {
+  contextTruncationTotal += 1;
+}
+
+/** §Phase 12.2 Part E - a dependency call exceeded its NAMED p95 budget (domain/ai/latency-budget.ts), stricter/more specific than the blanket SLOW_THRESHOLD_MS warn log. */
+export function recordLatencyBudgetExceeded(operation: string): void {
+  latencyBudgetExceededTotal.set(operation, (latencyBudgetExceededTotal.get(operation) ?? 0) + 1);
+}
+
+/** §Phase 12.2 Part E (§33) - call at the start/end of every AI request to track in-flight concurrency. */
+export function recordAiRequestStart(): void {
+  aiConcurrentRequests += 1;
+}
+export function recordAiRequestEnd(): void {
+  aiConcurrentRequests = Math.max(0, aiConcurrentRequests - 1);
+}
+
+/** §Phase 12.2 Part F (§35) - a request joined an in-flight single-flight computation instead of starting its own. */
+export function recordCacheStampedeJoined(): void {
+  cacheStampedeJoinedTotal += 1;
 }
 
 export function recordBatchDuration(jobName: string, durationMs: number): void {
@@ -231,6 +302,14 @@ export function renderPrometheusMetrics(): string {
   lines.push("# TYPE clausebase_ai_llm_cost_usd_total counter");
   lines.push(`clausebase_ai_llm_cost_usd_total ${llmCostUsdTotal.toFixed(6)}`);
 
+  lines.push("# HELP clausebase_ai_llm_usage_by_provider LLM token/cost usage broken out by provider/model (never per-org/per-user).");
+  lines.push("# TYPE clausebase_ai_llm_usage_by_provider counter");
+  for (const [label, entry] of llmUsageByProvider) {
+    lines.push(`clausebase_ai_llm_usage_by_provider_prompt_tokens{provider_model="${label}"} ${entry.promptTokens}`);
+    lines.push(`clausebase_ai_llm_usage_by_provider_completion_tokens{provider_model="${label}"} ${entry.completionTokens}`);
+    lines.push(`clausebase_ai_llm_usage_by_provider_cost_usd{provider_model="${label}"} ${entry.costUsd.toFixed(6)}`);
+  }
+
   lines.push("# HELP clausebase_ai_retrieval_hits_total Retrieval requests that found at least one citation-worthy result.");
   lines.push("# TYPE clausebase_ai_retrieval_hits_total counter");
   lines.push(`clausebase_ai_retrieval_hits_total ${retrievalHits}`);
@@ -270,6 +349,24 @@ export function renderPrometheusMetrics(): string {
   lines.push("# HELP clausebase_ai_stale_embedding_count Embeddings whose dimension can never populate the native pgvector column (last-measured).");
   lines.push("# TYPE clausebase_ai_stale_embedding_count gauge");
   lines.push(`clausebase_ai_stale_embedding_count ${staleEmbeddingCount}`);
+
+  lines.push("# HELP clausebase_ai_context_truncation_total Requests whose citation list was truncated to fit the context budget.");
+  lines.push("# TYPE clausebase_ai_context_truncation_total counter");
+  lines.push(`clausebase_ai_context_truncation_total ${contextTruncationTotal}`);
+
+  lines.push("# HELP clausebase_ai_latency_budget_exceeded_total Dependency calls that exceeded their named per-operation latency budget.");
+  lines.push("# TYPE clausebase_ai_latency_budget_exceeded_total counter");
+  for (const [operation, count] of latencyBudgetExceededTotal) {
+    lines.push(`clausebase_ai_latency_budget_exceeded_total{operation="${operation}"} ${count}`);
+  }
+
+  lines.push("# HELP clausebase_ai_concurrent_requests Current in-flight AI requests, process-wide.");
+  lines.push("# TYPE clausebase_ai_concurrent_requests gauge");
+  lines.push(`clausebase_ai_concurrent_requests ${aiConcurrentRequests}`);
+
+  lines.push("# HELP clausebase_ai_cache_stampede_joined_total Requests that joined an in-flight single-flight computation instead of recomputing.");
+  lines.push("# TYPE clausebase_ai_cache_stampede_joined_total counter");
+  lines.push(`clausebase_ai_cache_stampede_joined_total ${cacheStampedeJoinedTotal}`);
 
   return lines.join("\n") + "\n";
 }

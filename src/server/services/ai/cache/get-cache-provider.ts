@@ -1,6 +1,8 @@
 import { resolveRedisConfig } from "@/lib/config/redis";
 
 import type { CacheProvider } from "./cache-provider";
+import type { DistributedLock } from "./distributed-lock";
+import { RedisDistributedLock } from "./distributed-lock";
 import { InMemoryCacheProvider } from "./in-memory-cache-provider";
 import { getAiCacheRedisClient } from "./redis-client";
 import { RedisCacheProvider } from "./redis-cache-provider";
@@ -46,4 +48,21 @@ export function getCacheProvider(): CacheProvider {
     default:
       throw new Error(`지원하지 않는 AI_CACHE_PROVIDER 입니다: ${driver}`);
   }
+}
+
+/**
+ * §Phase 12.2 Part F (§35) - `undefined` when AI_CACHE_PROVIDER=memory (a
+ * single process has no other instance to coordinate with - in-process
+ * single-flight, see in-flight-deduplication.ts, is already sufficient).
+ * Only meaningful/non-undefined for `redis`, where multiple server
+ * instances share one Redis and can genuinely race on the same key.
+ */
+export function getCacheStampedeLock(): DistributedLock | undefined {
+  const driver = process.env.AI_CACHE_PROVIDER ?? "memory";
+  if (driver !== "redis") {
+    return undefined;
+  }
+  const config = resolveRedisConfig();
+  const client = getAiCacheRedisClient(config);
+  return new RedisDistributedLock(client);
 }

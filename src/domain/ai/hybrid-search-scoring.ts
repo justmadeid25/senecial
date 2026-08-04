@@ -31,9 +31,19 @@ export interface RankedHybridResult extends HybridSearchCandidate {
  * 0.6/0.4 split (keyword-favored) fixes this without regressing the
  * existing true-positive cases (see MIN_CITATION_SCORE's own comment).
  */
-const KEYWORD_WEIGHT = 0.6;
-const VECTOR_WEIGHT = 0.4;
-const EXACT_PHRASE_BONUS = 0.1;
+export const KEYWORD_WEIGHT = 0.6;
+export const VECTOR_WEIGHT = 0.4;
+export const EXACT_PHRASE_BONUS = 0.1;
+
+/**
+ * §Phase 12.2 Part C - rerank() below is a real, deliberate heuristic (an
+ * exact-phrase-match bonus), not a placeholder for a future cross-encoder
+ * reranker - this identifies WHICH heuristic is live, the same way
+ * SEARCH_WEIGHT_VERSION identifies which merge weights are live. Bump this
+ * (and AI_CONFIG_VERSION in ai-runtime-configuration.ts) if the reranking
+ * heuristic itself ever changes shape, independently of a pure weight retune.
+ */
+export const RERANKER_VERSION = "exact-phrase-bonus-v1";
 
 /**
  * §Phase 12.1 Part 15 (Cache) - bump this whenever KEYWORD_WEIGHT,

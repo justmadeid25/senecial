@@ -16,7 +16,10 @@
     "db:seed": "prisma db seed",
     "test": "dotenv -e .env.test -- prisma migrate deploy && dotenv -e .env.test -- vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:e2e": "dotenv -e .env.test -- prisma migrate deploy && dotenv -e .env.test -- playwright test",
+    "test:e2e": "pnpm test:e2e:prod",
+    "test:e2e:dev": "dotenv -e .env.e2e -- tsx scripts/e2e-db-reset.ts && dotenv -e .env.e2e -- playwright test --project=e2e-default --project=e2e-queue",
+    "test:e2e:prod": "dotenv -e .env.e2e -- tsx scripts/run-e2e-prod.ts",
+    "test:e2e:prod:repeat": "tsx scripts/e2e-repeat-runner.ts --prod",
     "notifications:generate": "tsx scripts/generate-notifications.ts",
     "files:reconcile": "tsx scripts/reconcile-deleted-files.ts",
     "files:find-orphans": "tsx scripts/find-orphan-files.ts",
@@ -50,7 +53,10 @@
     "ai:scan-stale-embeddings": "tsx scripts/scan-stale-embeddings.ts",
     "ai:evaluate": "tsx scripts/ai-evaluate.ts",
     "ai:vector-backfill": "tsx scripts/vector-backfill.ts",
-    "ai:benchmark-vector-search": "tsx scripts/benchmark-vector-search.ts"
+    "ai:benchmark-vector-search": "tsx scripts/benchmark-vector-search.ts",
+    "ai:release-manifest": "tsx scripts/ai-release-manifest.ts",
+    "test:e2e:repeat": "tsx scripts/e2e-repeat-runner.ts",
+    "db:verify-migrations": "tsx scripts/verify-migrations.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1100.0",

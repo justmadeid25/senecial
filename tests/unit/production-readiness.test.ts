@@ -46,6 +46,36 @@ describe("validateProductionEnvironment (§36)", () => {
     expect(findCheck(checks, "APP_URL").status).toBe("fail");
   });
 
+  it("§Phase 12.3 Part B - ALLOW_HTTP_IN_PRODUCTION_TESTING downgrades a non-HTTPS URL to warn (never pass, never silent)", () => {
+    const checks = validateProductionEnvironment({
+      ...BASE_PRODUCTION_ENV,
+      APP_URL: "http://127.0.0.1:3200",
+      AUTH_URL: "http://127.0.0.1:3200",
+      ALLOW_HTTP_IN_PRODUCTION_TESTING: "true",
+    });
+    expect(findCheck(checks, "APP_URL").status).toBe("warn");
+    expect(findCheck(checks, "AUTH_URL").status).toBe("warn");
+    expect(findCheck(checks, "APP_URL").detail).toContain("ALLOW_HTTP_IN_PRODUCTION_TESTING");
+  });
+
+  it("§Phase 12.3 Part B - a genuinely HTTPS URL still reports plain pass, even with the override flag set", () => {
+    const checks = validateProductionEnvironment({
+      ...BASE_PRODUCTION_ENV,
+      ALLOW_HTTP_IN_PRODUCTION_TESTING: "true",
+    });
+    expect(findCheck(checks, "APP_URL").status).toBe("pass");
+    expect(findCheck(checks, "APP_URL").detail).toBe("HTTPS");
+  });
+
+  it("§Phase 12.3 Part B - the override does nothing unless the value is exactly the string \"true\"", () => {
+    const checks = validateProductionEnvironment({
+      ...BASE_PRODUCTION_ENV,
+      APP_URL: "http://clausebase.example.com",
+      ALLOW_HTTP_IN_PRODUCTION_TESTING: "1",
+    });
+    expect(findCheck(checks, "APP_URL").status).toBe("fail");
+  });
+
   it("fails development invitation mailer without the allow flag", () => {
     const checks = validateProductionEnvironment(BASE_PRODUCTION_ENV);
     expect(findCheck(checks, "이메일 인증 mailer").status).toBe("fail");

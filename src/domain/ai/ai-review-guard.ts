@@ -8,6 +8,12 @@
  * "banned phrase" list already enforced for rule-based signals (see
  * domain/clauses/labels.ts and tests/unit/clause-labels-safety.test.ts).
  */
+/**
+ * §Phase 12.2 Part C - identifies which version of the banned-term list
+ * below is live. Bump whenever a term is added/removed/reworded.
+ */
+export const RISK_LANGUAGE_GUARD_VERSION = "v1";
+
 const BANNED_JUDGMENT_TERMS = [
   "위험한 조항",
   "위험합니다",

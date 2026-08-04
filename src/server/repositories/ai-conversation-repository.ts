@@ -55,12 +55,23 @@ export interface AddMessageCitationData {
   score: number;
 }
 
+/** §Phase 12.2 Part C (§22) - only ever set for ASSISTANT messages; see Message model's own doc comment in schema.prisma. */
+export interface AddMessageProvenanceData {
+  aiConfigVersion: string;
+  aiConfigChecksum: string;
+  embeddingVersion: string;
+  vectorSearchProvider: string;
+  promptTemplateVersion: string;
+  citationValidatorVersion: string;
+}
+
 export interface AddMessageData {
   conversationId: string;
   organizationId: string;
   role: ConversationRole;
   content: string;
   citations?: AddMessageCitationData[];
+  provenance?: AddMessageProvenanceData;
 }
 
 /** Creates the Message and its MessageCitation rows atomically, and bumps the parent Conversation's updatedAt (for the conversation list's "most recently active" ordering) - all in one transaction. */
@@ -72,6 +83,12 @@ export async function addMessage(data: AddMessageData): Promise<MessageWithCitat
         organizationId: data.organizationId,
         role: data.role,
         content: data.content,
+        aiConfigVersion: data.provenance?.aiConfigVersion,
+        aiConfigChecksum: data.provenance?.aiConfigChecksum,
+        embeddingVersion: data.provenance?.embeddingVersion,
+        vectorSearchProvider: data.provenance?.vectorSearchProvider,
+        promptTemplateVersion: data.provenance?.promptTemplateVersion,
+        citationValidatorVersion: data.provenance?.citationValidatorVersion,
         citations: data.citations?.length
           ? {
               create: data.citations.map((citation) => ({

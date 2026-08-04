@@ -2,6 +2,9 @@ import { computeConfigChecksum } from "@/domain/production-readiness/config-chec
 import { validateProductionEnvironment } from "@/domain/production-readiness/validate-environment";
 import { getLogger } from "@/server/logging";
 import { recordStartupDuration } from "@/server/monitoring/metrics";
+import { getAiRuntimeConfiguration } from "@/server/services/ai/get-ai-runtime-configuration";
+
+import { collectResourceDiagnostics } from "./resource-diagnostics";
 
 const startedAt = Date.now();
 
@@ -27,6 +30,22 @@ export async function runStartupChecks(): Promise<void> {
 
   logger.info("startup.config_checksum", { checksum, keyCount });
 
+  // §Phase 12.2 Part C (§21) - a SEPARATE checksum from the one above:
+  // that one covers the whole production-readiness env checklist, this one
+  // covers only AI-quality-relevant settings (AiRuntimeConfiguration) - the
+  // two change independently and are logged independently. Never blocks
+  // startup by itself (misconfigured AI_VECTOR_SEARCH_PROVIDER etc. is
+  // caught by validateProductionEnvironment/checkReadiness instead) - this
+  // is purely the "what config produced this process's answers" log line.
+  try {
+    const aiConfig = getAiRuntimeConfiguration();
+    logger.info("startup.ai_config", { version: aiConfig.version, checksum: aiConfig.checksum });
+  } catch (error) {
+    logger.warn("startup.ai_config_unavailable", {
+      detail: error instanceof Error ? error.message : "unknown error",
+    });
+  }
+
   const failed = checks.filter((check) => check.status === "fail");
   const warned = checks.filter((check) => check.status === "warn");
 
@@ -46,6 +65,15 @@ export async function runStartupChecks(): Promise<void> {
     warnedCount: warned.length,
     nodeEnv: process.env.NODE_ENV ?? "(unset)",
   });
+
+  // §Phase 12.3 Part B (§8) - process-level resource snapshot at startup,
+  // safe to log unconditionally (see resource-diagnostics.ts's own
+  // docstring - never a request/user/org identifier). Distinguishes "the
+  // server never had a chance to warm up" from "it degraded under load" -
+  // scripts/run-e2e-prod.ts also captures the tail of this process's
+  // stdout on crash, which will include the LAST startup/request-time
+  // diagnostic line logged before the crash if one was emitted.
+  logger.info("startup.resource_diagnostics", collectResourceDiagnostics());
 
   if (process.env.NODE_ENV === "production" && failed.length > 0) {
     logger.error("startup.rejected", {

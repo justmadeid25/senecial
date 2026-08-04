@@ -23,7 +23,7 @@
  * Plain `.mjs` (not `.ts`) - this must run via bare `node`, with no
  * build/type-strip step, inside the Dockerfile's `builder` stage.
  */
-import { existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, cpSync, lstatSync, rmSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,6 +40,22 @@ if (!existsSync(instrumentationJs) || !existsSync(nftPath)) {
   process.exit(0);
 }
 
+/**
+ * §Phase 12.3 Part B (§6) - REAL bug found and fixed here: pnpm's
+ * node_modules layout (symlinks into the shared `.pnpm` store) means
+ * `instrumentation.js.nft.json` (produced by Next.js's file-tracer) does
+ * NOT list every dependency as an individual file the way a plain
+ * npm/yarn install would - some entries are themselves directories/
+ * symlinks (e.g. `pg`'s transitive deps: pg-pool, pg-protocol, ...),
+ * which `copyFileSync` cannot handle (EPERM on Windows, EISDIR on Linux -
+ * this would have failed the real Docker build too, not just this local
+ * standalone run - never previously exercised end-to-end before Phase
+ * 12.3). `lstatSync` (not `statSync`) so a symlink itself is detected
+ * rather than transparently followed; `cpSync(..., dereference: true)`
+ * copies the symlink's REAL target content (not a symlink pointing
+ * outside the standalone tree), keeping the standalone bundle genuinely
+ * self-contained/portable.
+ */
 function copyIntoStandalone(relativeToServerDir) {
   const src = path.join(serverDir, relativeToServerDir);
   const dest = path.join(standaloneServerDir, relativeToServerDir);
@@ -47,9 +63,30 @@ function copyIntoStandalone(relativeToServerDir) {
     console.warn(`[docker-copy-instrumentation] WARNING: expected file missing, skipping: ${relativeToServerDir}`);
     return;
   }
+  // Some `../`-prefixed nft.json entries resolve to the SAME real path for
+  // both src and dest once pnpm's symlink layout is followed (Node's own
+  // `cpSync` throws ERR_FS_CP_EINVAL for this, which is actually a benign
+  // case - the file is already exactly where it needs to be via Next's own
+  // standalone tracing, nothing to do).
+  if (path.resolve(src) === path.resolve(dest)) {
+    return;
+  }
   mkdirSync(path.dirname(dest), { recursive: true });
-  copyFileSync(src, dest);
-  console.log(`[docker-copy-instrumentation] copied ${relativeToServerDir}`);
+  // Always start from a clean slate at dest - re-running this script
+  // (idempotent by design, e.g. after a partial prior run) must never hit
+  // Node's cpSync "cannot overwrite directory with non-directory"/vice-versa
+  // edge cases, which are real and reproducible with pnpm's symlinked
+  // layout (confirmed empirically during Phase 12.3).
+  if (existsSync(dest)) {
+    rmSync(dest, { recursive: true, force: true });
+  }
+  const isDirEntry = lstatSync(src).isDirectory() || lstatSync(src).isSymbolicLink();
+  if (isDirEntry) {
+    cpSync(src, dest, { recursive: true, dereference: true });
+  } else {
+    copyFileSync(src, dest);
+  }
+  console.log(`[docker-copy-instrumentation] copied ${relativeToServerDir}${isDirEntry ? " (directory/symlink)" : ""}`);
 }
 
 copyIntoStandalone("instrumentation.js");

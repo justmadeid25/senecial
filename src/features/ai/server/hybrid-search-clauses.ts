@@ -1,6 +1,8 @@
 import { AI_CACHE_TTL_SECONDS } from "@/lib/config/ai-cache";
 import { hashCacheInput } from "@/domain/ai/cache-key";
 import { mergeScores, rerank } from "@/domain/ai/hybrid-search-scoring";
+import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
+import { DEFAULT_TOP_K } from "@/domain/ai/retrieval-config";
 import { buildRetrievalCacheKey } from "@/domain/ai/retrieval-cache-key";
 import { extractKeywords } from "@/domain/ai/keyword-extraction";
 import { normalizeClauseText } from "@/domain/clauses/normalize-clause-text";
@@ -8,9 +10,17 @@ import { getLatestEmbeddingGenerationChecksum } from "@/server/repositories/clau
 import { findClauseKeywordMatchCounts } from "@/server/repositories/clause-keyword-match-repository";
 import { prisma } from "@/server/db/client";
 import { getCacheProvider } from "@/server/services/ai/cache/get-cache-provider";
+import { withInFlightDeduplication } from "@/server/services/ai/cache/in-flight-deduplication";
 import { getClauseVectorSearchProvider } from "@/server/services/ai/vector-search/get-clause-vector-search-provider";
 import { getEmbeddingProvider } from "@/server/services/ai/get-embedding-provider";
-import { recordCacheEvent, recordDependencyLatency, recordRetrievalHit } from "@/server/monitoring/metrics";
+import {
+  recordCacheEvent,
+  recordDependencyLatency,
+  recordLatencyBudgetExceeded,
+  recordRetrievalHit,
+} from "@/server/monitoring/metrics";
+
+const DEVELOPMENT_PROVIDER_NAME = "development";
 
 import { searchClauseVectors } from "./search-clause-vectors";
 
@@ -26,7 +36,6 @@ export interface HybridSearchResultItem {
   vectorScore: number;
 }
 
-const DEFAULT_TOP_K = 10;
 /**
  * §Phase 12.1 Part 8 - the vector leg asks for a larger CANDIDATE POOL
  * than the final `topK`, not just `topK` itself: hybrid search's whole
@@ -62,12 +71,28 @@ async function getCachedQueryEmbedding(normalizedQuestion: string): Promise<{ ve
   }
 
   recordCacheEvent("embedding", false);
-  const embeddingStart = performance.now();
-  const result = await embeddingProvider.generateEmbedding(normalizedQuestion);
-  recordDependencyLatency("embedding", performance.now() - embeddingStart);
+  // §Phase 12.2 Part F (§35 stampede) - in-process single-flight: many
+  // concurrent requests for the SAME normalized question in this process
+  // join one embedding call instead of each computing their own.
+  return withInFlightDeduplication(cacheKey, async () => {
+    const recheck = await cache.get(cacheKey);
+    if (recheck) {
+      recordCacheEvent("embedding", true);
+      return JSON.parse(recheck) as { vector: number[]; dimension: number };
+    }
 
-  await cache.set(cacheKey, JSON.stringify(result), AI_CACHE_TTL_SECONDS.embedding);
-  return result;
+    const embeddingStart = performance.now();
+    const result = await embeddingProvider.generateEmbedding(normalizedQuestion);
+    const embeddingDurationMs = performance.now() - embeddingStart;
+    recordDependencyLatency("embedding", embeddingDurationMs);
+    const isDevelopmentEmbedding = embeddingProvider.providerName === DEVELOPMENT_PROVIDER_NAME;
+    if (exceedsLatencyBudget("embedding", embeddingDurationMs, isDevelopmentEmbedding)) {
+      recordLatencyBudgetExceeded("embedding");
+    }
+
+    await cache.set(cacheKey, JSON.stringify(result), AI_CACHE_TTL_SECONDS.embedding);
+    return result;
+  });
 }
 
 async function hybridSearchClausesUncached(params: {
@@ -84,7 +109,11 @@ async function hybridSearchClausesUncached(params: {
   // Step 1 - ILIKE.
   const keywordStart = performance.now();
   const keywordMatches = await findClauseKeywordMatchCounts(organizationId, keywords);
-  recordDependencyLatency("keywordSearch", performance.now() - keywordStart);
+  const keywordDurationMs = performance.now() - keywordStart;
+  recordDependencyLatency("keywordSearch", keywordDurationMs);
+  if (exceedsLatencyBudget("keywordSearch", keywordDurationMs, false)) {
+    recordLatencyBudgetExceeded("keywordSearch");
+  }
 
   // Step 2 - vector search. §Phase 12.1 - goes through the real DB-native
   // pgvector provider by default (application cosine as the explicit
@@ -126,9 +155,17 @@ async function hybridSearchClausesUncached(params: {
     }
   }
   const reranked = rerank(merged, exactPhraseMatchIds).slice(0, topK);
-  recordDependencyLatency("hybridMerge", performance.now() - mergeStart);
+  const hybridMergeDurationMs = performance.now() - mergeStart;
+  recordDependencyLatency("hybridMerge", hybridMergeDurationMs);
+  if (exceedsLatencyBudget("hybridMerge", hybridMergeDurationMs, false)) {
+    recordLatencyBudgetExceeded("hybridMerge");
+  }
 
-  recordDependencyLatency("retrieval", performance.now() - retrievalStart);
+  const retrievalDurationMs = performance.now() - retrievalStart;
+  recordDependencyLatency("retrieval", retrievalDurationMs);
+  if (exceedsLatencyBudget("retrieval", retrievalDurationMs, false)) {
+    recordLatencyBudgetExceeded("retrieval");
+  }
   recordRetrievalHit(reranked.length > 0);
 
   if (reranked.length === 0) {
@@ -213,10 +250,24 @@ export async function hybridSearchClauses(params: {
   }
   recordCacheEvent("retrieval", false);
 
-  const results = await hybridSearchClausesUncached({ organizationId: params.organizationId, question: params.question, topK });
+  // §Phase 12.2 Part F (§35 stampede) - many concurrent requests for the
+  // identical (org, question, topK, config) join one retrieval pipeline
+  // run instead of each re-running keyword+vector search independently.
+  return withInFlightDeduplication(cacheKey, async () => {
+    const recheck = await cache.get(cacheKey);
+    if (recheck) {
+      const cached = JSON.parse(recheck) as CachedRetrieval;
+      if (cached.embeddingChecksum === currentChecksum) {
+        recordCacheEvent("retrieval", true);
+        return cached.results;
+      }
+    }
 
-  const toCache: CachedRetrieval = { embeddingChecksum: currentChecksum, results };
-  await cache.set(cacheKey, JSON.stringify(toCache), AI_CACHE_TTL_SECONDS.retrieval);
+    const results = await hybridSearchClausesUncached({ organizationId: params.organizationId, question: params.question, topK });
 
-  return results;
+    const toCache: CachedRetrieval = { embeddingChecksum: currentChecksum, results };
+    await cache.set(cacheKey, JSON.stringify(toCache), AI_CACHE_TTL_SECONDS.retrieval);
+
+    return results;
+  });
 }

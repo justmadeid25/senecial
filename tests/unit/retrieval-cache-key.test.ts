@@ -64,4 +64,12 @@ describe("buildRetrievalCacheKey (Phase 12.1 §15/§20 - provider-specific cache
     const { SEARCH_WEIGHT_VERSION } = await import("@/domain/ai/hybrid-search-scoring");
     expect(buildRetrievalCacheKey(baseParams())).toContain(`w${SEARCH_WEIGHT_VERSION}`);
   });
+
+  it("§Phase 12.2 §34 - embeds PROMPT_TEMPLATE_VERSION and CITATION_VALIDATOR_VERSION too", async () => {
+    const { PROMPT_TEMPLATE_VERSION } = await import("@/domain/ai/prompt-builder");
+    const { CITATION_VALIDATOR_VERSION } = await import("@/domain/ai/citation-required");
+    const key = buildRetrievalCacheKey(baseParams());
+    expect(key).toContain(`p${PROMPT_TEMPLATE_VERSION}`);
+    expect(key).toContain(`c${CITATION_VALIDATOR_VERSION}`);
+  });
 });

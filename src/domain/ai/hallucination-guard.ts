@@ -22,8 +22,17 @@ import type { Citation } from "./citation";
  * ~0.18) - score meaningfully higher. Both constants remain
  * env-overridable for tuning without a code change.
  */
-const MIN_CITATION_SCORE = Number(process.env.AI_MIN_CITATION_SCORE ?? "0.15");
-const MIN_CITATION_COUNT = Number(process.env.AI_MIN_CITATION_COUNT ?? "1");
+export const MIN_CITATION_SCORE = Number(process.env.AI_MIN_CITATION_SCORE ?? "0.15");
+export const MIN_CITATION_COUNT = Number(process.env.AI_MIN_CITATION_COUNT ?? "1");
+
+/**
+ * §Phase 12.2 Part C - identifies which version of this guard's DECISION
+ * LOGIC (not just its threshold values, which are already captured
+ * separately as MIN_CITATION_SCORE/MIN_CITATION_COUNT) is live. Bump only
+ * if checkEvidenceSufficiency()'s actual algorithm changes shape (e.g. a
+ * future per-citation weighting scheme), not for a threshold-only retune.
+ */
+export const HALLUCINATION_GUARD_VERSION = "v1";
 
 export const UNKNOWN_ANSWER_TEXT =
   "죄송합니다. 제공된 계약 자료에서 이 질문에 대한 근거를 충분히 찾지 못했습니다. " +

@@ -3,6 +3,15 @@ import { buildCitationMarker } from "./citation-marker";
 import type { LlmMessage } from "./llm-provider";
 
 /**
+ * §Phase 12.2 Part C - identifies which version of the system/user prompt
+ * TEXT (buildSystemPrompt/buildUserPrompt below) produced a given AI
+ * answer, independent of which LLM provider/model ran it. Bump whenever
+ * the prompt wording changes in a way that could plausibly shift answer
+ * quality - a pure typo fix does not require a bump, a rule change does.
+ */
+export const PROMPT_TEMPLATE_VERSION = "v1";
+
+/**
  * §Prompt Builder - "시스템 프롬프트 / 검색 결과 / 사용자 질문 / 출처 모두
  * 구조화, LLM provider와 분리". This module owns every string that goes
  * into an LlmMessage[] - no LLM provider (development or real) ever

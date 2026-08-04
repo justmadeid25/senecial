@@ -2,6 +2,15 @@ import type { Citation } from "./citation";
 import { findCitationMarkers } from "./citation-marker";
 
 /**
+ * §Phase 12.2 Part C - identifies which version of citation-validation
+ * logic (this file's assertEveryParagraphHasCitation + citation.ts's
+ * assertCitationsPresent, together - they are always deployed as one unit)
+ * produced/verified a given AI answer. Bump if the marker-matching rule or
+ * per-paragraph requirement ever changes shape.
+ */
+export const CITATION_VALIDATOR_VERSION = "v1";
+
+/**
  * §Citation Required - "모든 문단 citation 없으면 출력 거부". Called on the
  * FINAL assembled answer (after streaming completes, before it is
  * persisted as a Message and before the stream is considered "done" to
