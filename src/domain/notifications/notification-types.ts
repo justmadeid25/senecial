@@ -1,0 +1,19 @@
+export const NOTIFICATION_TYPES = {
+  EXPIRATION_30D: "EXPIRATION_30D",
+  EXPIRATION_14D: "EXPIRATION_14D",
+  EXPIRATION_7D: "EXPIRATION_7D",
+  EXPIRATION_1D: "EXPIRATION_1D",
+  EXPIRATION_TODAY: "EXPIRATION_TODAY",
+  RENEWAL_NOTICE_DUE: "RENEWAL_NOTICE_DUE",
+} as const;
+
+export type NotificationType = (typeof NOTIFICATION_TYPES)[keyof typeof NOTIFICATION_TYPES];
+
+export const NOTIFICATION_TYPE_LABELS: Record<NotificationType, string> = {
+  EXPIRATION_30D: "만료 30일 전",
+  EXPIRATION_14D: "만료 14일 전",
+  EXPIRATION_7D: "만료 7일 전",
+  EXPIRATION_1D: "만료 1일 전",
+  EXPIRATION_TODAY: "오늘 만료",
+  RENEWAL_NOTICE_DUE: "자동갱신 통보 기한 도래",
+};

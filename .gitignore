@@ -1,0 +1,76 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache
+/.test-scratch
+
+# Phase 10B - development-mailer test mailbox (E2E link retrieval only, never real email)
+/.test-mailbox
+
+# backup output (never commit real or test backup archives/dumps)
+/backups
+
+# Phase 10C - project-local dev/test PostgreSQL 18.4 instance (port 5433,
+# started manually via pg_ctl - see docs/operations/backup.md). Never commit
+# database files or the dev-only password file.
+/.devdb
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+!.env.test.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+/src/generated/prisma
+
+# local file storage (uploaded contract files must never be committed)
+/storage/*
+!/storage/.gitkeep
+
+# local dev-only MinIO data directory (Phase 10A real S3-compatible test infra)
+/.minio-data
+
+# Phase 12 - AI evaluation CLI (`pnpm ai:evaluate`) output - regenerated
+# each run, never a committed artifact.
+/reports
+
+# Phase 12.2 - per-run E2E storage isolation (tmp/e2e-storage/<run-id>) and
+# any other scratch output - regenerated per run, never committed.
+/tmp

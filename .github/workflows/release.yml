@@ -1,0 +1,140 @@
+name: Release
+
+# Phase 11 Part E - "production 준비" (production readiness gate), NOT an
+# actual production deploy (this Phase explicitly scopes production
+# deployment infrastructure itself as future work - see
+# docs/operations/release.md). Triggered by pushing a `v*` tag - the same
+# tag becomes the release's own immutable identity, independent of
+# whichever commit SHA docker.yml already built/pushed for that commit.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to re-validate (defaults to the triggering tag)"
+        required: false
+
+permissions:
+  contents: write
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Re-runs the exact same quality bar as ci.yml, pinned to the tagged
+  # commit - a release must never assume "PR CI passed once, therefore
+  # this tag is fine". Deliberately duplicated (not a `workflow_call` of
+  # ci.yml) - a release gate must keep working even if ci.yml's own
+  # trigger conditions ever change.
+  validate:
+    name: Validate release candidate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: clausebase_test
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+      AUTH_SECRET: release-validate-only-secret-not-for-production-000
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm exec eslint .
+      - run: pnpm exec prisma migrate deploy
+      - run: pnpm exec vitest run
+      - run: pnpm build
+      - name: Production readiness validator (config-shape only - no real secrets in this job)
+        run: pnpm exec tsx scripts/validate-production-readiness.ts
+        env:
+          NODE_ENV: production
+          APP_URL: https://staging.invalid
+          AUTH_URL: https://staging.invalid
+          ALLOW_DEVELOPMENT_INVITATION_MAILER: "true"
+          ALLOW_DEVELOPMENT_ACCOUNT_SECURITY_MAILER: "true"
+          ALLOW_NOOP_MALWARE_SCANNER: "true"
+          ALLOW_DEVELOPMENT_EXTRACTION_PROVIDER: "true"
+          ALLOW_DEVELOPMENT_CLAUSE_SEGMENTER: "true"
+          ALLOW_UNENCRYPTED_BACKUP: "true"
+          RATE_LIMITER: "redis"
+        continue-on-error: true # informational for a release candidate - the real gate is staging-deploy.yml's own production:validate run against real secrets
+
+  # Confirms the exact image docker.yml already built for this commit
+  # exists and is pullable - a release never triggers its own separate
+  # build (§22 - one image, one immutable SHA, built exactly once).
+  confirm-image:
+    name: Confirm release image exists
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: docker pull (fails loudly if docker.yml never built this commit)
+        run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.sha }}
+
+  # Creates (or updates) the GitHub Release for this tag with an
+  # auto-generated changelog - the release notes artifact, not a deploy
+  # trigger. Actual production rollout remains a manual/future step (see
+  # docs/operations/release.md's explicit scope note).
+  publish-release-notes:
+    name: Publish GitHub Release notes
+    needs: confirm-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: gh release create
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            --notes-start-tag "$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo '')" \
+            || gh release create "$TAG" --title "$TAG" --generate-notes

@@ -1,0 +1,69 @@
+name: Nightly real-infra tests
+
+# Phase 10C §19 - the opt-in tests that hit REAL external services
+# (tests/integration/postmark-real.test.ts, s3-storage-real.test.ts,
+# redis-rate-limit-real.test.ts - each `describe.skipIf`'d unless its own
+# TEST_* flag is set) never run in ci.yml, which must stay safe to run on a
+# credential-less fork PR. This workflow is the only place they run: on a
+# schedule, or on-demand via workflow_dispatch - both require repository
+# secrets, which GitHub never exposes to a fork PR's workflow run regardless
+# of what triggers it.
+on:
+  schedule:
+    - cron: "0 18 * * *" # 03:00 KST
+  workflow_dispatch: {}
+
+concurrency:
+  group: nightly-real-infra
+  cancel-in-progress: false
+
+jobs:
+  real-infra-tests:
+    name: Real Postmark / S3 / Redis tests
+    runs-on: ubuntu-latest
+    environment: real-infra-tests
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: clausebase_test
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+      AUTH_SECRET: nightly-only-secret-not-for-production-use-0000000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm exec prisma migrate deploy
+      - name: Real Postmark API test
+        run: pnpm exec vitest run tests/integration/postmark-real.test.ts
+        env:
+          TEST_POSTMARK: "true"
+          TEST_POSTMARK_SERVER_TOKEN: ${{ secrets.TEST_POSTMARK_SERVER_TOKEN }}
+      - name: Real S3-compatible storage test
+        run: pnpm exec vitest run tests/integration/s3-storage-real.test.ts
+        env:
+          TEST_S3_ENDPOINT: ${{ secrets.TEST_S3_ENDPOINT }}
+          TEST_S3_BUCKET: ${{ secrets.TEST_S3_BUCKET }}
+          TEST_S3_REGION: ${{ secrets.TEST_S3_REGION }}
+          TEST_S3_ACCESS_KEY_ID: ${{ secrets.TEST_S3_ACCESS_KEY_ID }}
+          TEST_S3_SECRET_ACCESS_KEY: ${{ secrets.TEST_S3_SECRET_ACCESS_KEY }}
+      - name: Real Redis rate-limit test
+        run: pnpm exec vitest run tests/integration/redis-rate-limit-real.test.ts
+        env:
+          TEST_REDIS_URL: ${{ secrets.TEST_REDIS_URL }}

@@ -1,0 +1,140 @@
+import { execFileSync } from "node:child_process";
+
+import { Document, Packer, Paragraph } from "docx";
+import { expect, test } from "@playwright/test";
+
+/**
+ * Full Phase 12 pipeline E2E coverage: upload -> extraction worker ->
+ * segmentation worker -> embedding worker -> /ai chat (real streaming,
+ * real citation, real hallucination-guard fallback). Uses the
+ * deterministic development embedding/LLM providers (the only ones
+ * available without a real AI API key) - see
+ * server/services/ai/deterministic-development-*.ts.
+ */
+
+const runId = Date.now();
+const ownerEmail = `ai-e2e-owner-${runId}@e2e-test.local`;
+const password = "Password123";
+const contractTitle = `AI 상담 E2E 계약 ${runId}`;
+
+const TERMINATION_TEXT = "어느 일방이 본 계약을 위반한 경우 상대방은 서면 통지로 즉시 계약을 해지할 수 있다.";
+const CONFIDENTIALITY_TEXT = "양 당사자는 본 계약과 관련하여 취득한 상대방의 영업비밀을 제3자에게 누설하여서는 안 된다.";
+
+async function buildContractDocxBuffer(lines: string[]): Promise<Buffer> {
+  const doc = new Document({ sections: [{ children: lines.map((line) => new Paragraph(line)) }] });
+  return Buffer.from(await Packer.toBuffer(doc));
+}
+
+function runWorker(scriptPath: string) {
+  execFileSync(
+    "pnpm",
+    ["exec", "dotenv", "-e", ".env.test", "--", "tsx", scriptPath, "--", "--limit=20"],
+    { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
+  );
+}
+
+async function signUp(page: import("@playwright/test").Page) {
+  await page.goto("/signup");
+  await page.getByLabel("이름").fill("AI E2E Owner");
+  await page.getByLabel("회사명").fill("AI E2E Co");
+  await page.getByLabel("이메일").fill(ownerEmail);
+  await page.getByLabel("비밀번호", { exact: true }).fill(password);
+  await page.getByLabel("비밀번호 확인").fill(password);
+  await page.getByRole("button", { name: "회원가입" }).click();
+  await page.waitForURL(/\/login/);
+}
+
+async function logIn(page: import("@playwright/test").Page) {
+  await page.goto("/login");
+  await page.getByLabel("이메일").fill(ownerEmail);
+  await page.getByLabel("비밀번호").fill(password);
+  await page.getByRole("button", { name: "로그인" }).click();
+  await page.waitForURL(/\/dashboard/);
+}
+
+let contractUrl = "";
+
+test.describe.serial("AI conversation: real citation + hallucination-guard fallback", () => {
+  // Phase 12.1 - this sandbox's dev DB now runs the pgvector-capable
+  // PostgreSQL build (see docs/operations/ai-platform.md) and the app
+  // itself grew substantially in this phase (new schema, providers, cache,
+  // metrics) - Turbopack's on-demand compilation of a much larger route
+  // set, combined with pre-existing DB latency variance, empirically pushed
+  // this test's first-upload step past its old 60s/15s budget. Bumped
+  // based on real measured runs (~1.3 min for the setup test), not a
+  // guess.
+  test.setTimeout(180_000);
+
+  test("owner sets up a contract with segmented, embedded clauses", async ({ page }) => {
+    await signUp(page);
+    await logIn(page);
+
+    await page.goto("/contracts/new");
+    await page.getByLabel("계약명 *").fill(contractTitle);
+    await page.getByLabel("계약 유형 *").click();
+    await page.getByRole("option", { name: "용역계약" }).click();
+    await page.getByRole("button", { name: "계약 생성" }).click();
+    await page.waitForURL(/\/contracts\/(?!new$)[a-z0-9]{20,}$/);
+    contractUrl = new URL(page.url()).pathname;
+
+    const docxBuffer = await buildContractDocxBuffer([
+      "AI 상담 E2E 테스트 계약서",
+      "제1조(계약 해지)",
+      TERMINATION_TEXT,
+      "제2조(비밀유지)",
+      CONFIDENTIALITY_TEXT,
+    ]);
+
+    await page.goto(contractUrl);
+    await page.setInputFiles("#contract-file", {
+      name: "ai-e2e-source.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: docxBuffer,
+    });
+    await page.getByRole("button", { name: "업로드" }).click();
+    await expect(page.getByText("ai-e2e-source.docx").first()).toBeVisible({ timeout: 45_000 });
+
+    const fileRow = page.getByRole("row").filter({ hasText: "ai-e2e-source.docx" });
+    await fileRow.getByRole("button", { name: "정보 추출" }).click();
+    await expect(page.getByText("정보 추출을 시작했습니다.")).toBeVisible();
+    runWorker("scripts/process-extraction-jobs.ts");
+
+    await page.goto(contractUrl);
+    await expect(page.getByText("계약 조항 분해")).toBeVisible();
+    await page.getByRole("button", { name: "조항 분해 시작" }).click();
+    await expect(page.getByText("조항 분해를 시작했습니다.")).toBeVisible();
+    runWorker("scripts/process-clause-segmentation-jobs.ts");
+
+    // §Embedding Pipeline - the segmentation worker's own completion hook
+    // already enqueued an EmbeddingJob per clause (see
+    // process-clause-segmentation-job.ts); this is the worker that
+    // actually generates them.
+    runWorker("scripts/process-embedding-jobs.ts");
+  });
+
+  test("asks a relevant question and receives a real streamed, cited answer", async ({ page }) => {
+    await logIn(page);
+    await page.goto("/ai");
+
+    await page.getByPlaceholder("예: 이 계약의 해지 조건은 무엇인가요?").fill("계약을 해지하려면 어떻게 해야 하나요?");
+    await page.getByRole("button", { name: "질문하기" }).click();
+
+    await expect(page.getByText("해지").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("근거").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(contractTitle).first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("asks an unrelated question and receives the fixed hallucination-guard fallback, never a guess", async ({
+    page,
+  }) => {
+    await logIn(page);
+    await page.goto("/ai");
+
+    await page
+      .getByPlaceholder("예: 이 계약의 해지 조건은 무엇인가요?")
+      .fill("오늘 서울 날씨는 어떤가요?");
+    await page.getByRole("button", { name: "질문하기" }).click();
+
+    await expect(page.getByText("근거를 충분히 찾지 못했습니다").first()).toBeVisible({ timeout: 15_000 });
+  });
+});

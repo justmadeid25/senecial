@@ -1,0 +1,62 @@
+name: Rollback staging
+
+# Phase 11 Part F - explicit, discoverable rollback entry point. This is a
+# thin wrapper: it does NOT re-implement the deploy pipeline, it just
+# re-triggers staging-deploy.yml (via its workflow_dispatch `image_sha`
+# input) against a PAST, already-built-and-pushed image SHA - the same
+# backup -> migrate -> deploy -> smoke pipeline runs, just pointed
+# backwards. §Rollback - code rollback only, fully automated; DB rollback
+# is never automatic (staging-deploy.yml's `migrate` job still runs
+# `prisma migrate deploy`, which is always forward-only - see
+# docs/operations/rollback.md for why an automatic DB "down" migration is
+# never offered here).
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "Git commit SHA of the previously-built-and-pushed image to roll back to (required)"
+        required: true
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  confirm-image-exists:
+    name: Confirm the rollback target image was actually built
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Fails loudly (not "rolled back to nothing") if the given SHA was
+      # never actually built by docker.yml - a typo'd SHA here must never
+      # silently redeploy the CURRENT (already-broken) image instead.
+      - name: docker pull ${{ github.event.inputs.image_sha }}
+        run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_sha }}
+
+  trigger-rollback-deploy:
+    name: Re-run staging-deploy.yml against the rollback SHA
+    needs: confirm-image-exists
+    runs-on: ubuntu-latest
+    steps:
+      - name: gh workflow run staging-deploy.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run staging-deploy.yml \
+            --repo "${{ github.repository }}" \
+            --field image_sha="${{ github.event.inputs.image_sha }}"
+          echo "롤백 배포를 트리거했습니다: staging-deploy.yml (image_sha=${{ github.event.inputs.image_sha }})"
+          echo "진행 상황은 Actions 탭의 'Staging deploy' 워크플로에서 확인하십시오."

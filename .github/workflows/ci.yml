@@ -1,0 +1,280 @@
+name: CI
+
+# Phase 10C Part D - runs on every PR and every push to main. Postgres/Redis/
+# MinIO run as GitHub-hosted service containers (§17/§18) - no external
+# network access and no real Postmark/S3 credentials are required for this
+# workflow, so it runs identically on a fork PR with no repository secrets.
+# Real-infra opt-in tests (tests/integration/postmark-real.test.ts,
+# s3-storage-real.test.ts, redis-rate-limit-real.test.ts) stay skipped here -
+# see nightly-real-infra.yml for those.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Every job below uses this same throwaway, non-secret dev password -
+  # matches docker-compose.yml's own "development-only-password" convention.
+  # Never a real credential; safe to hardcode in a public workflow file.
+  PGPASSWORD: development-only-password
+  DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+  AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
+  AUTH_URL: http://localhost:3000
+  APP_URL: http://localhost:3000
+
+jobs:
+  # §17 items 1-6: install, generate, typecheck, lint, unit+integration tests.
+  quality-and-tests:
+    name: Quality checks + unit/integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: clausebase_test
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        run: pnpm exec prisma generate
+
+      - name: TypeScript
+        run: pnpm exec tsc --noEmit
+
+      - name: ESLint
+        run: pnpm exec eslint .
+
+      - name: Apply migrations (test database)
+        run: pnpm exec prisma migrate deploy
+
+      - name: Unit + integration tests
+        run: pnpm exec vitest run
+        env:
+          REDIS_URL: redis://localhost:6379
+
+      - name: Build
+        run: pnpm build
+
+  # §20 - migration deploy must succeed against a completely empty database,
+  # independent of whatever schema state the tests job's DB ends up in.
+  # §21 - drift check: the migrations directory replayed from scratch must
+  # produce a schema identical to schema.prisma, with no manual/out-of-band
+  # changes and no leftover `prisma migrate dev` state ever committed.
+  migration-validation:
+    name: Migration deploy + drift check (empty database)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: clausebase_migration_check
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_migration_check"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_migration_check?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - name: prisma validate
+        run: pnpm exec prisma validate
+      - name: prisma migrate deploy (empty database)
+        run: pnpm exec prisma migrate deploy
+      - name: Drift check - migrations vs schema.prisma
+        # --exit-code: 0 = no diff (migrations, replayed from scratch, match
+        # schema.prisma exactly), 2 = non-empty diff (drift - e.g. a
+        # hand-edited schema.prisma with no corresponding migration file),
+        # 1 = a real command error. `--from-config-datasource` diffs against
+        # the database this job just ran `prisma migrate deploy` on above.
+        run: pnpm exec prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --script --exit-code
+
+  # §17 item 9 - build the production Dockerfile on every PR (build only,
+  # never pushed here - see docker.yml for the push-on-merge job). Never
+  # runs `prisma migrate dev` anywhere in this pipeline (§20).
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: clausebase:ci-${{ github.sha }}
+          build-args: |
+            GIT_COMMIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # §17 item 10 - secret scan. Runs on the full PR diff (fetch-depth 0) so a
+  # secret introduced anywhere in the branch's history is caught, not just
+  # the latest commit.
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # §17 item 11 - dependency audit with a severity policy rather than an
+  # all-or-nothing gate: critical/high vulnerabilities block the merge,
+  # moderate/low are reported but never fail the build (§28).
+  dependency-audit:
+    name: Dependency audit (pnpm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: pnpm audit - full report (never fails the build by itself)
+        run: pnpm audit || true
+      - name: pnpm audit - fail only on critical/high (§28)
+        run: pnpm audit --audit-level=high
+
+  # §18 - E2E is a separate job (own service containers, own long-running
+  # Playwright browser install) so a slow/flaky UI test never blocks the
+  # fast unit/integration feedback loop above.
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: clausebase_test
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: clausebase
+          MINIO_ROOT_PASSWORD: development-only-password
+        ports: ["9000:9000"]
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 10s
+          --health-retries 10
+        # MinIO's official image needs an explicit command; GitHub Actions
+        # service containers don't accept `command:`, so this workflow only
+        # verifies MinIO comes up healthy - FILE_STORAGE_DRIVER stays
+        # "local" for the E2E run below (S3-mode E2E is exercised via
+        # tests/integration/s3-storage-real.test.ts's opt-in path instead).
+    env:
+      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_test?schema=public
+      AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
+      FILE_STORAGE_DRIVER: local
+      RATE_LIMITER: redis
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install Playwright browsers
+        # `--with-deps` (system-level libs) still needs to run even on a
+        # cache hit - only the downloaded browser binaries themselves are
+        # cached; `pnpm exec playwright install-deps` alone would skip
+        # re-downloading browsers but Playwright itself checks the cache
+        # dir and no-ops quickly when a hit already has everything.
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run E2E suite
+        run: pnpm test:e2e
+      # §18 - never upload a raw server log or trace without checking it
+      # first: this repo's own logging never prints tokens/passwords/full
+      # emails (see src/domain/logging), and Playwright traces never
+      # capture env vars, only page/network activity - but artifacts are
+      # only uploaded on failure, and only the trace/report, never `.env*`.
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

@@ -1,0 +1,86 @@
+name: Docker build and push
+
+# Phase 10C §22 - builds and pushes the production image on every merge to
+# main, tagged with the immutable git commit SHA (never `latest` alone -
+# §22's "latest만으로 배포하지 마십시오"). `staging` is a movable pointer tag
+# only, re-pointed at the newest SHA each run - staging-deploy.yml always
+# deploys by SHA, never by resolving `staging` itself, so a deploy's actual
+# target is never ambiguous.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    outputs:
+      image_sha_tag: ${{ steps.tags.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          echo "sha_tag=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            GIT_COMMIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ steps.tags.outputs.build_date }}
+          tags: |
+            ${{ steps.tags.outputs.sha_tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # §14 - confirm no secret env var NAME (let alone a value) is baked
+      # into any layer's build-time history. This only catches secrets that
+      # would show up in `docker history` (ENV/ARG/RUN command text) - it is
+      # not a substitute for actually never COPYing a real .env file into the
+      # image, which this Dockerfile's own .dockerignore already prevents.
+      - name: Inspect image history for leaked secrets
+        run: |
+          docker pull ${{ steps.tags.outputs.sha_tag }}
+          HISTORY=$(docker history --no-trunc ${{ steps.tags.outputs.sha_tag }})
+          echo "$HISTORY"
+          if echo "$HISTORY" | grep -qiE "DATABASE_URL=|AUTH_SECRET=|AWS_SECRET|POSTMARK_SERVER_TOKEN=|REDIS_URL=.*:.*@|BACKUP_AGE_IDENTITY="; then
+            echo "::error::A secret-shaped value was found baked into an image layer - see docker history output above."
+            exit 1
+          fi
+
+      - name: Confirm non-root user
+        run: |
+          USER_OUT=$(docker inspect --format='{{.Config.User}}' ${{ steps.tags.outputs.sha_tag }})
+          echo "Image USER: $USER_OUT"
+          if [ -z "$USER_OUT" ] || [ "$USER_OUT" = "root" ] || [ "$USER_OUT" = "0" ]; then
+            echo "::error::Image runs as root (USER='$USER_OUT') - expected the non-root 'node' user."
+            exit 1
+          fi

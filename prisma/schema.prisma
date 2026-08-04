@@ -1,0 +1,1306 @@
+// ClauseBase - Prisma schema
+// 향후 마이그레이션 시 이 파일을 기준으로 검토하십시오.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [pg_trgm, vector]
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum MembershipRole {
+  OWNER
+  MEMBER
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  TERMINATED
+  ARCHIVED
+}
+
+enum ContractType {
+  NDA
+  SERVICE
+  SUPPLY
+  EMPLOYMENT
+  LICENSE
+  INVESTMENT
+  SHAREHOLDER
+  LEASE
+  PARTNERSHIP
+  OTHER
+}
+
+enum ContractEventType {
+  START
+  EXPIRATION
+  RENEWAL_NOTICE
+  PAYMENT
+  REVIEW
+  CUSTOM
+}
+
+enum ExtractionJobStatus {
+  PENDING
+  PROCESSING
+  REVIEW_REQUIRED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ExtractionStage {
+  FILE_TEXT_EXTRACTION
+  CONTRACT_FIELD_EXTRACTION
+  READY_FOR_REVIEW
+}
+
+enum SuggestionReviewStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EDITED
+}
+
+enum ClauseSegmentationJobStatus {
+  PENDING
+  PROCESSING
+  REVIEW_REQUIRED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// Deliberately narrow for this Phase's MVP scope - not every possible
+// Korean contract clause category, just the ones common enough to be
+// useful for review signals and comparison. "OTHER"/"UNKNOWN" absorb the
+// rest rather than growing this list without bound.
+enum ClauseType {
+  DEFINITIONS
+  TERM
+  TERMINATION
+  PAYMENT
+  PRICE_ADJUSTMENT
+  SCOPE_OF_WORK
+  DELIVERY
+  ACCEPTANCE
+  WARRANTY
+  LIABILITY
+  LIMITATION_OF_LIABILITY
+  INDEMNITY
+  CONFIDENTIALITY
+  INTELLECTUAL_PROPERTY
+  DATA_PROTECTION
+  SECURITY
+  NON_COMPETE
+  NON_SOLICITATION
+  AUTO_RENEWAL
+  NOTICE
+  FORCE_MAJEURE
+  GOVERNING_LAW
+  JURISDICTION
+  DISPUTE_RESOLUTION
+  ASSIGNMENT
+  CHANGE_CONTROL
+  AUDIT_RIGHTS
+  COMPLIANCE
+  INSURANCE
+  SUBCONTRACTING
+  OTHER
+  UNKNOWN
+}
+
+enum ClauseClassificationState {
+  UNREVIEWED
+  CONFIRMED
+  CORRECTED
+  REJECTED
+}
+
+enum ClauseReviewSignalStatus {
+  OPEN
+  ACKNOWLEDGED
+  DISMISSED
+  RESOLVED
+}
+
+enum ClauseReviewSignalType {
+  MISSING_EXPECTED_CLAUSE
+  DIFFERENT_FROM_STANDARD
+  UNUSUAL_NUMBER
+  UNUSUAL_DURATION
+  AUTO_RENEWAL_PRESENT
+  UNLIMITED_LIABILITY_LANGUAGE
+  BROAD_INDEMNITY_LANGUAGE
+  ONE_SIDED_TERMINATION_LANGUAGE
+  MANUAL_REVIEW
+}
+
+// Phase 9 - data retention / purge
+enum DataPurgeJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// Phase 9 - batch job execution history / duplicate-run prevention
+enum BatchExecutionStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Core models
+// ---------------------------------------------------------------------------
+
+model User {
+  id              String    @id @default(cuid())
+  name            String
+  email           String    @unique
+  passwordHash    String
+  /**
+   * Null until the address is confirmed via EmailVerificationToken. Does
+   * not currently gate login (see domain/account-security) - only gates
+   * features that explicitly require a verified address.
+   */
+  emailVerifiedAt DateTime?
+  /**
+   * Bumped on password change / account-security events (Phase 9 §22).
+   * The JWT embeds the value it was issued with; a mismatch against the
+   * live DB value means the session must be treated as invalidated even
+   * though the JWT signature itself is still valid.
+   */
+  sessionVersion  Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships             Membership[]
+  createdContracts        Contract[]                @relation("ContractCreatedBy")
+  uploadedFiles           ContractFile[]            @relation("ContractFileUploadedBy")
+  auditLogs               AuditLog[]
+  sentInvitations         OrganizationInvitation[]  @relation("InvitationInvitedBy")
+  notificationReceipts    NotificationReceipt[]
+  createdExtractionJobs   ContractExtractionJob[]   @relation("ExtractionJobCreatedBy")
+  reviewedSuggestions     ContractFieldSuggestion[] @relation("SuggestionReviewedBy")
+  createdSegmentationJobs ClauseSegmentationJob[]   @relation("SegmentationJobCreatedBy")
+  reviewedClauses         ContractClause[]          @relation("ClauseReviewedBy")
+  createdClauseStandards  ClauseStandard[]          @relation("ClauseStandardCreatedBy")
+  reviewedClauseSignals   ClauseReviewSignal[]      @relation("ClauseSignalReviewedBy")
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  conversations           Conversation[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9 - account security (email verification / password reset)
+//
+// Same "hash only, never plaintext" pattern as OrganizationInvitation.token
+// (see server/auth/invitation-token.ts) - a leaked DB/backup alone can
+// never be used to derive a working verification/reset link.
+// ---------------------------------------------------------------------------
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+  @@map("email_verification_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships         Membership[]
+  counterparties      Counterparty[]
+  contracts           Contract[]
+  contractFiles       ContractFile[]
+  contractEvents      ContractEvent[]
+  auditLogs           AuditLog[]
+  invitations         OrganizationInvitation[]
+  notifications       Notification[]
+  extractionJobs      ContractExtractionJob[]
+  segmentationJobs    ClauseSegmentationJob[]
+  clauseStandards     ClauseStandard[]
+  clauseReviewSignals ClauseReviewSignal[]
+  contractSections    ContractSection[]
+  contractClauses     ContractClause[]
+  clauseEmbeddings    ClauseEmbedding[]
+  embeddingJobs       EmbeddingJob[]
+  conversations       Conversation[]
+  messages            Message[]
+  aiSearchPatterns    AiSearchPattern[]
+
+  @@map("organizations")
+}
+
+model Membership {
+  id             String         @id @default(cuid())
+  userId         String
+  organizationId String
+  role           MembershipRole @default(MEMBER)
+  createdAt      DateTime       @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Counterparty {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  name               String
+  businessNumber     String?
+  representativeName String?
+  contactName        String?
+  contactEmail       String?
+  contactPhone       String?
+  memo               String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contracts    Contract[]
+
+  @@index([organizationId])
+  @@index([organizationId, name])
+  @@index([organizationId, deletedAt])
+  @@map("counterparties")
+}
+
+model Contract {
+  id               String         @id @default(cuid())
+  organizationId   String
+  counterpartyId   String?
+  createdById      String
+  title            String
+  contractNumber   String?
+  contractType     ContractType
+  status           ContractStatus @default(DRAFT)
+  startDate        DateTime?
+  endDate          DateTime?
+  signedDate       DateTime?
+  autoRenewal      Boolean        @default(false)
+  noticePeriodDays Int?
+  amount           Decimal?       @db.Decimal(14, 2)
+  currency         String?        @db.VarChar(3)
+  governingLaw     String?
+  jurisdiction     String?
+  description      String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  deletedAt        DateTime?
+
+  organization     Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  counterparty     Counterparty?           @relation(fields: [counterpartyId], references: [id])
+  createdBy        User                    @relation("ContractCreatedBy", fields: [createdById], references: [id])
+  files            ContractFile[]
+  events           ContractEvent[]
+  notifications    Notification[]
+  extractionJobs   ContractExtractionJob[]
+  segmentationJobs ClauseSegmentationJob[]
+  sections         ContractSection[]
+  clauses          ContractClause[]
+  reviewSignals    ClauseReviewSignal[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, endDate])
+  @@index([counterpartyId])
+  @@index([organizationId, deletedAt])
+  @@index([organizationId, status, deletedAt])
+  @@index([organizationId, endDate, deletedAt])
+  @@index([organizationId, updatedAt, deletedAt])
+  // Phase 8 - contract-type-analytics and amount-analytics filter live
+  // contracts by contractType/currency respectively; both are common
+  // enough (§11/§12) to justify a dedicated index rather than a full scan.
+  @@index([organizationId, contractType, deletedAt])
+  @@index([organizationId, currency, deletedAt])
+  @@map("contracts")
+}
+
+model ContractFile {
+  id             String    @id @default(cuid())
+  organizationId String
+  contractId     String
+  uploadedById   String
+  originalName   String
+  storageKey     String    @unique
+  mimeType       String
+  size           Int
+  checksum       String
+  createdAt      DateTime  @default(now())
+  deletedAt      DateTime?
+
+  // Phase 10A §35 - which StorageDriver this row's physical bytes live
+  // under. Every pre-Phase-10A row is implicitly "local" (the only driver
+  // that ever existed), hence the default - the migration backfills this
+  // column to "local" for all existing rows rather than leaving it null,
+  // so every caller can treat it as a required, always-populated
+  // discriminator with no separate null-check branch. storage:migrate-to-s3
+  // flips a row to "s3" only after the object is verified present in S3;
+  // every storage-aware code path (download, delete, reconciliation,
+  // orphan scan) MUST dispatch on this field per-row rather than assuming
+  // a single global driver, since local and s3 rows can coexist
+  // indefinitely (migration is opt-in/gradual, not atomic).
+  storageProvider String @default("local")
+
+  // Physical-deletion reconciliation state (Phase 5) - deletedAt flips
+  // when the DB row is soft-deleted; storageDeletedAt only flips once the
+  // physical file has actually been confirmed removed from storage. A row
+  // with deletedAt set but storageDeletedAt null is a candidate for
+  // reconcile-deleted-files.ts. See features/contract-files/server/
+  // reconcile-deleted-files.ts for the retry policy.
+  storageDeletedAt      DateTime?
+  storageDeleteError    String?
+  storageDeleteAttempts Int       @default(0)
+
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract       Contract                @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  uploadedBy     User                    @relation("ContractFileUploadedBy", fields: [uploadedById], references: [id])
+  extractionJobs ContractExtractionJob[]
+
+  @@index([organizationId])
+  @@index([contractId])
+  @@index([organizationId, deletedAt])
+  @@index([contractId, deletedAt])
+  @@index([deletedAt, storageDeletedAt, storageDeleteAttempts])
+  @@map("contract_files")
+}
+
+model ContractEvent {
+  id             String            @id @default(cuid())
+  organizationId String
+  contractId     String
+  type           ContractEventType
+  eventDate      DateTime
+  title          String
+  description    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract     Contract     @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([contractId])
+  @@index([organizationId, eventDate])
+  @@map("contract_events")
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  entityType     String
+  entityId       String
+  action         String
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([organizationId, entityType, entityId])
+  @@index([organizationId, createdAt])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Organization invitations
+// ---------------------------------------------------------------------------
+
+model OrganizationInvitation {
+  id             String         @id @default(cuid())
+  organizationId String
+  email          String
+  role           MembershipRole @default(MEMBER)
+  /**
+   * SHA-256 hash only - the plaintext token is never stored.
+   */
+  tokenHash      String         @unique
+  invitedById    String
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  /**
+   * Phase 10B - incremented on every resend (rotateInvitationToken()). Used only to derive a per-resend mail idempotency key (domain/email/idempotency-key.ts) - never displayed to users.
+   */
+  resendCount    Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationInvitedBy", fields: [invitedById], references: [id])
+
+  @@index([organizationId, email])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, acceptedAt, revokedAt])
+  @@index([expiresAt])
+  @@map("organization_invitations")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+//
+// Notifications themselves are organization-wide content (every member of
+// the org can see the same "계약 X, 30일 후 만료" notification). Per-user
+// read state is intentionally NOT a column on Notification - it lives
+// entirely in NotificationReceipt, created lazily the first time a user
+// reads (or marks read) a given notification. A notification with no
+// receipt row for a user is implicitly unread for that user; this avoids
+// having to pre-populate one receipt per (notification, member) pair.
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id             String   @id @default(cuid())
+  organizationId String
+  contractId     String?
+  /**
+   * e.g. "EXPIRATION_30D" / "EXPIRATION_TODAY" / "RENEWAL_NOTICE_DUE" - see domain/notifications.
+   */
+  type           String
+  title          String
+  message        String
+  /**
+   * Deterministic dedup key, e.g. "contract:{id}:expiration:30d:{yyyy-mm-dd}".
+   */
+  eventKey       String
+  scheduledFor   DateTime
+  createdAt      DateTime @default(now())
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract     Contract?             @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  receipts     NotificationReceipt[]
+
+  @@unique([organizationId, eventKey])
+  @@index([organizationId, createdAt])
+  @@index([contractId])
+  @@map("notifications")
+}
+
+model NotificationReceipt {
+  id             String    @id @default(cuid())
+  notificationId String
+  userId         String
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt])
+  @@map("notification_receipts")
+}
+
+// ---------------------------------------------------------------------------
+// Contract text extraction and AI-assisted field suggestion review
+//
+// Core principle: extraction/AI never writes to Contract directly. A job
+// produces ContractExtractedDocument (raw text) and ContractFieldSuggestion
+// rows (candidate field values) for a human to review; only
+// applyApprovedSuggestions() ever updates a Contract row, and only with
+// fields a user explicitly accepted or edited.
+// ---------------------------------------------------------------------------
+
+model ContractExtractionJob {
+  id             String              @id @default(cuid())
+  organizationId String
+  contractId     String
+  contractFileId String
+  status         ExtractionJobStatus @default(PENDING)
+  stage          ExtractionStage?
+  attempt        Int                 @default(0)
+  maxAttempts    Int                 @default(3)
+
+  /**
+   * Metadata about what produced the suggestions - never the provider's raw request/response.
+   */
+  provider         String?
+  model            String?
+  extractorVersion String
+
+  /**
+   * SHA-256 of the ContractFile's content at job-creation time - re-verified before processing (§21).
+   */
+  inputChecksum String
+
+  /**
+   * Worker claim state - see repositories/extraction-job-repository.ts's claimNextPendingJob().
+   */
+  lockedAt DateTime?
+  lockedBy String?
+
+  startedAt    DateTime?
+  completedAt  DateTime?
+  failedAt     DateTime?
+  errorCode    String?
+  errorMessage String?
+
+  /**
+   * Non-fatal notices from text/field extraction (e.g. "종료일을 인식했지만 형식이 모호해 확정하지 못했습니다") - a string array, never the document text itself.
+   */
+  warnings Json?
+
+  /**
+   * Contract.updatedAt captured when suggestions became ready for review -
+   * the optimistic-concurrency baseline applyApprovedSuggestions() checks
+   * against (§26).
+   */
+  contractUpdatedAtSnapshot DateTime?
+
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract     Contract     @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contractFile ContractFile @relation(fields: [contractFileId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("ExtractionJobCreatedBy", fields: [createdById], references: [id])
+
+  extractedDocument ContractExtractedDocument?
+  suggestions       ContractFieldSuggestion[]
+
+  /**
+   * One row per (file, content, extractor version) for its whole lifecycle
+   * - retries transition the SAME row (FAILED -> PENDING, REVIEW_REQUIRED ->
+   * PROCESSING for re-extraction) rather than inserting a new one, so a
+   * plain table-wide unique constraint is sufficient here and no partial
+   * index / raw SQL migration is needed. See job-state-machine.ts.
+   */
+  @@unique([contractFileId, inputChecksum, extractorVersion])
+  @@index([organizationId, status, createdAt])
+  @@index([contractId, createdAt])
+  @@index([contractFileId, createdAt])
+  @@index([status, createdAt])
+  @@map("contract_extraction_jobs")
+}
+
+model ContractExtractedDocument {
+  id               String   @id @default(cuid())
+  extractionJobId  String   @unique
+  organizationId   String
+  contractId       String
+  contractFileId   String
+  /**
+   * Full extracted text - as sensitive as the source contract. Never logged, never in AuditLog metadata.
+   */
+  text             String
+  characterCount   Int
+  pageCount        Int?
+  language         String?
+  extractionMethod String
+  contentChecksum  String
+  createdAt        DateTime @default(now())
+
+  extractionJob    ContractExtractionJob   @relation(fields: [extractionJobId], references: [id], onDelete: Cascade)
+  segmentationJobs ClauseSegmentationJob[]
+
+  @@index([organizationId, contractId])
+  @@map("contract_extracted_documents")
+}
+
+model ContractFieldSuggestion {
+  id              String                 @id @default(cuid())
+  extractionJobId String
+  organizationId  String
+  contractId      String
+  fieldKey        String
+  rawValue        String?
+  normalizedValue Json?
+  confidence      Decimal?               @db.Decimal(3, 2)
+  /**
+   * Capped at 500 chars at the application layer (see extraction validation) - DB column enforces the same cap.
+   */
+  sourceText      String?                @db.VarChar(500)
+  sourcePage      Int?
+  reviewStatus    SuggestionReviewStatus @default(PENDING)
+  /**
+   * User-edited value for EDITED suggestions - kept separate from normalizedValue so the original AI suggestion is never overwritten.
+   */
+  reviewedValue   Json?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  extractionJob ContractExtractionJob @relation(fields: [extractionJobId], references: [id], onDelete: Cascade)
+  reviewedBy    User?                 @relation("SuggestionReviewedBy", fields: [reviewedById], references: [id])
+
+  @@unique([extractionJobId, fieldKey])
+  @@index([organizationId, contractId, reviewStatus])
+  @@map("contract_field_suggestions")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 - clause segmentation, classification, search, comparison, and
+// review signals.
+//
+// Core principle (unchanged from Phase 6): this pipeline never modifies
+// Contract or the extracted document text. It only ever produces new
+// ClauseSegmentationJob/ContractSection/ContractClause/ClauseReviewSignal
+// rows for a human to read - nothing here writes back to Contract, and
+// nothing asserts a legal conclusion (see domain/clauses/labels.ts).
+// ---------------------------------------------------------------------------
+
+model ClauseSegmentationJob {
+  id                  String                      @id @default(cuid())
+  organizationId      String
+  contractId          String
+  extractedDocumentId String
+  status              ClauseSegmentationJobStatus @default(PENDING)
+  attempt             Int                         @default(0)
+  maxAttempts         Int                         @default(3)
+  segmenterVersion    String
+
+  /**
+   * SHA-256 of the ContractExtractedDocument's text at job-creation time -
+   * re-verified before processing (documents don't change, but this keeps
+   * the same "checksum re-verified at processing time" contract as Phase
+   * 6's extraction jobs for consistency).
+   */
+  inputChecksum String
+
+  /**
+   * sha256(extractedDocumentId + inputChecksum + segmenterVersion) - a
+   * single hashed unique key rather than a compound unique constraint
+   * (unlike Phase 6's extraction jobs) per this Phase's design guidance.
+   * Retries/re-segmentation reuse the SAME row (see job-state-machine.ts),
+   * so this single-column unique index is sufficient on its own.
+   */
+  jobKey String @unique
+
+  lockedAt DateTime?
+  lockedBy String?
+
+  startedAt    DateTime?
+  completedAt  DateTime?
+  failedAt     DateTime?
+  errorCode    String?
+  errorMessage String?
+
+  /**
+   * Non-fatal notices from the segmenter/classifier - a string array,
+   * never clause text itself.
+   */
+  warnings Json?
+
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  organization      Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract          Contract                  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  extractedDocument ContractExtractedDocument @relation(fields: [extractedDocumentId], references: [id], onDelete: Cascade)
+  createdBy         User                      @relation("SegmentationJobCreatedBy", fields: [createdById], references: [id])
+
+  sections ContractSection[]
+  clauses  ContractClause[]
+
+  @@index([organizationId, status, createdAt])
+  @@index([contractId, createdAt])
+  @@index([extractedDocumentId, createdAt])
+  @@index([status, createdAt])
+  @@map("clause_segmentation_jobs")
+}
+
+model ContractSection {
+  id                  String   @id @default(cuid())
+  organizationId      String
+  contractId          String
+  extractedDocumentId String
+  segmentationJobId   String
+  title               String?
+  sectionType         String?
+  orderIndex          Int
+  /**
+   * Character offsets into ContractExtractedDocument.text -
+   * document.text.slice(startOffset, endOffset) must equal `text` (see
+   * domain/clauses/offset-validation.ts).
+   */
+  startOffset         Int
+  endOffset           Int
+  text                String
+  createdAt           DateTime @default(now())
+
+  organization    Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract        Contract              @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  segmentationJob ClauseSegmentationJob @relation(fields: [segmentationJobId], references: [id], onDelete: Cascade)
+
+  clauses ContractClause[]
+
+  @@unique([segmentationJobId, orderIndex])
+  @@index([organizationId, contractId, orderIndex])
+  @@map("contract_sections")
+}
+
+model ContractClause {
+  id                  String  @id @default(cuid())
+  organizationId      String
+  contractId          String
+  extractedDocumentId String
+  segmentationJobId   String
+  sectionId           String?
+  parentClauseId      String?
+  clauseNumber        String?
+  title               String?
+  text                String
+  /**
+   * Search-normalized copy of `text` (whitespace/quote/case normalization)
+   * - see domain/clauses/normalize-clause-text.ts. `text` itself is never
+   * altered.
+   */
+  normalizedText      String
+  orderIndex          Int
+  depth               Int     @default(0)
+  startOffset         Int
+  endOffset           Int
+  sourcePageStart     Int?
+  sourcePageEnd       Int?
+
+  /**
+   * The classifier's own suggestion - never overwritten once a human
+   * reviews it. See reviewedClauseType for the human-confirmed/corrected
+   * value, mirroring Phase 6's normalizedValue/reviewedValue split.
+   */
+  suggestedClauseType      ClauseType?
+  /**
+   * Set only once a human confirms (same value as suggested) or corrects
+   * (different value) the classification.
+   */
+  reviewedClauseType       ClauseType?
+  classificationState      ClauseClassificationState @default(UNREVIEWED)
+  classificationConfidence Decimal?                  @db.Decimal(3, 2)
+  /**
+   * Limited keyword/rule-name signals only (e.g. "keyword:손해배상") - never
+   * the clause text itself.
+   */
+  classificationSignals    Json?
+  reviewedById             String?
+  reviewedAt               DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization    Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract        Contract              @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  segmentationJob ClauseSegmentationJob @relation(fields: [segmentationJobId], references: [id], onDelete: Cascade)
+  section         ContractSection?      @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  reviewedBy      User?                 @relation("ClauseReviewedBy", fields: [reviewedById], references: [id])
+
+  parentClause ContractClause?  @relation("ClauseHierarchy", fields: [parentClauseId], references: [id], onDelete: SetNull)
+  childClauses ContractClause[] @relation("ClauseHierarchy")
+
+  reviewSignals ClauseReviewSignal[]
+  embeddings    ClauseEmbedding[]
+  embeddingJobs EmbeddingJob[]
+
+  @@unique([segmentationJobId, orderIndex])
+  @@index([organizationId, contractId, orderIndex])
+  @@index([organizationId, suggestedClauseType])
+  @@index([organizationId, reviewedClauseType])
+  @@index([parentClauseId])
+  // Phase 8 - clause-type-analytics counts clauses by classificationState
+  // (UNREVIEWED/CORRECTED/REJECTED breakdowns) per organization (§13).
+  @@index([organizationId, classificationState])
+  // Phase 7's fast Korean substring search index - now declared here (with
+  // `extensions = [pg_trgm]` on the datasource above) instead of living
+  // only as untracked raw SQL, so `prisma migrate dev` stops treating it as
+  // drift to drop on every future schema change.
+  @@index([normalizedText(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("contract_clauses")
+}
+
+model ClauseStandard {
+  id             String     @id @default(cuid())
+  organizationId String
+  name           String
+  clauseType     ClauseType
+  title          String?
+  text           String
+  normalizedText String
+  description    String?
+  isActive       Boolean    @default(true)
+  createdById    String
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("ClauseStandardCreatedBy", fields: [createdById], references: [id])
+
+  reviewSignals ClauseReviewSignal[]
+
+  @@index([organizationId, clauseType, deletedAt])
+  @@index([organizationId, updatedAt, deletedAt])
+  @@map("clause_standards")
+}
+
+model ClauseReviewSignal {
+  id               String                   @id @default(cuid())
+  organizationId   String
+  contractId       String
+  contractClauseId String?
+  clauseStandardId String?
+  /**
+   * Set for signals not tied to a specific existing clause (e.g.
+   * MISSING_EXPECTED_CLAUSE, where there is no ContractClause row at all).
+   */
+  clauseType       ClauseType?
+  signalType       ClauseReviewSignalType
+  status           ClauseReviewSignalStatus @default(OPEN)
+  title            String
+  description      String
+  /**
+   * Capped at 500 chars, application + DB - never the full clause/standard text.
+   */
+  evidenceText     String?                  @db.VarChar(500)
+  ruleVersion      String
+
+  /**
+   * Deterministic dedup key - contractId + contractClauseId (or clauseType,
+   * for clause-less signals) + signalType + ruleVersion, hashed. A plain
+   * compound unique constraint can't do this because contractClauseId is
+   * nullable and Postgres treats NULLs as always-distinct for uniqueness.
+   */
+  signalKey String @unique
+
+  reviewedById String?
+  reviewedAt   DateTime?
+  /**
+   * Capped at 2000 chars, application + DB.
+   */
+  reviewNote   String?   @db.VarChar(2000)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract       Contract        @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contractClause ContractClause? @relation(fields: [contractClauseId], references: [id], onDelete: Cascade)
+  clauseStandard ClauseStandard? @relation(fields: [clauseStandardId], references: [id], onDelete: SetNull)
+  reviewedBy     User?           @relation("ClauseSignalReviewedBy", fields: [reviewedById], references: [id])
+
+  @@index([organizationId, contractId, status])
+  @@index([contractClauseId])
+  // Phase 8 - review-signal-analytics groups by signalType/status and
+  // bucket-counts by createdAt for the monthly trend chart (§15/§22).
+  @@index([organizationId, signalType, status, createdAt])
+  @@map("clause_review_signals")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9 - data retention / purge tracking
+//
+// Deliberately no FK relation to Organization/Contract/etc: a purge job's
+// whole purpose is to remove data that may already be partially gone (or,
+// for org-level purges, whose parent Organization row is itself the
+// target), so a hard FK here would fight the very thing this model exists
+// to do. entityType/entityId together identify the target row generically
+// (e.g. entityType="Contract", entityId=<cuid>) - see
+// domain/retention/purge-contract.ts for the canonical ordering used when
+// entityType="Contract".
+// ---------------------------------------------------------------------------
+
+model DataPurgeJob {
+  id             String             @id @default(cuid())
+  organizationId String?
+  entityType     String
+  entityId       String
+  status         DataPurgeJobStatus @default(PENDING)
+  scheduledFor   DateTime
+  attempt        Int                @default(0)
+  maxAttempts    Int                @default(3)
+  lockedAt       DateTime?
+  lockedBy       String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  failedAt       DateTime?
+  errorCode      String?
+  /**
+   * Safe, generic failure classification only - never a raw exception
+   * message that might embed row content (Phase 9 §5's "민감 데이터 로그
+   * 금지" requirement applies here too).
+   */
+  errorMessage   String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([entityType, entityId])
+  @@index([status, scheduledFor])
+  @@index([organizationId, status])
+  @@map("data_purge_jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9 - batch job execution history + duplicate-run prevention
+//
+// executionKey encodes the job's cadence window (e.g.
+// "notifications:generate:2026-07-30" for a daily job,
+// "files:reconcile:2026-07-30T01" for an hourly one) so the unique
+// constraint alone prevents two overlapping scheduler triggers for the
+// same window from both proceeding - combined with a Postgres advisory
+// lock for the brief race between "check" and "insert" (see
+// server/batch/run-batch-job.ts).
+// ---------------------------------------------------------------------------
+
+model BatchExecution {
+  id             String               @id @default(cuid())
+  jobName        String
+  executionKey   String               @unique
+  status         BatchExecutionStatus
+  startedAt      DateTime
+  completedAt    DateTime?
+  heartbeatAt    DateTime?
+  lockedBy       String?
+  processedCount Int                  @default(0)
+  successCount   Int                  @default(0)
+  failureCount   Int                  @default(0)
+  errorCode      String?
+  createdAt      DateTime             @default(now())
+
+  @@index([jobName, startedAt])
+  @@index([status, heartbeatAt])
+  @@map("batch_executions")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10B - transactional email delivery tracking
+//
+// Design note (see README's Phase 10B section for the full rationale):
+// token-bearing mail (organization invitation / email verification /
+// password reset) is still sent SYNCHRONOUSLY at request time, exactly as
+// in Phase 9 - a row here is created already in a terminal state (SENT or
+// FAILED) purely for tracking/idempotency/audit, never left PENDING for
+// this worker to pick up. This is a deliberate, security-driven deviation
+// from a literal end-to-end async outbox: the plaintext token is only
+// ever held in memory during the original request (never persisted
+// anywhere, matching the existing tokenHash-only guarantee for
+// OrganizationInvitation/EmailVerificationToken/PasswordResetToken), so a
+// deferred worker running in a separate process later would have no way
+// to reconstruct a working link without that token being stored
+// somewhere first - which this schema deliberately has no column for.
+// Only PASSWORD_CHANGED (no secret payload - the worker safely re-fetches
+// the user's current email at send time) is ever actually left PENDING
+// for this worker's claim/retry loop to process asynchronously.
+// ---------------------------------------------------------------------------
+
+enum MailDeliveryStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model MailDelivery {
+  id             String  @id @default(cuid())
+  organizationId String?
+  userId         String?
+  messageType    String
+  /**
+   * sha256(lowercased recipient) - never the address itself (see domain/email/recipient-hash.ts).
+   */
+  recipientHash  String
+  /**
+   * Deterministic per-event key (see domain/email/idempotency-key.ts) - the unique constraint below is what actually prevents a retried request handler from creating a duplicate delivery for the same event.
+   */
+  idempotencyKey String  @unique
+
+  status      MailDeliveryStatus @default(PENDING)
+  attempt     Int                @default(0)
+  maxAttempts Int                @default(3)
+
+  provider          String?
+  providerMessageId String?
+
+  /**
+   * Claim ordering AND the "not before this time" retry gate - a retried row stays PENDING with this pushed forward by the backoff computed in domain/email/retry-backoff.ts.
+   */
+  scheduledFor DateTime  @default(now())
+  lockedAt     DateTime?
+  lockedBy     String?
+
+  sentAt       DateTime?
+  failedAt     DateTime?
+  /**
+   * Only ever one of MAIL_ERROR_CODES (domain/email/mail-error-codes.ts) - never a raw provider message, token, or rendered email body (section 16).
+   */
+  errorCode    String?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, scheduledFor])
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
+  @@map("mail_deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 12 - AI Contract Intelligence Platform. AI never writes to
+// Contract/ContractClause/ClauseStandard/ClauseReviewSignal - every model
+// below is purely additive (embeddings/jobs/conversations/citations/usage
+// stats), never a target of AI mutation. See README's Phase 12 section for
+// the full architecture.
+// ---------------------------------------------------------------------------
+
+enum EmbeddingJobStatus {
+  PENDING
+  PROCESSING
+  FAILED
+  COMPLETED
+}
+
+/**
+ * One row per (contractClauseId, embeddingVersion) - a clause edit NEVER
+ * updates an existing row in place (§Embedding Pipeline's "기존 조항은
+ * 수정하지 않는다"). Instead: the clause's `normalizedText` changes ->
+ * its checksum changes -> a new EmbeddingJob is enqueued -> the worker
+ * inserts a NEW ClauseEmbedding row with `embeddingVersion` incremented
+ * and flips `isLatest` on the previous row to false in the same
+ * transaction. This keeps every past embedding (and, transitively, every
+ * citation that already referenced it - see MessageCitation) permanently
+ * reproducible/auditable, never silently rewritten.
+ * `vector` is `Float[]` (a plain Postgres array Prisma fully supports
+ * with no extension) rather than pgvector's native `vector` type - see
+ * docs/operations/ai-platform.md for why, and for the parallel pgvector
+ * migration path this is designed to slot into without an application
+ * code change (only the repository's query implementation swaps).
+ */
+model ClauseEmbedding {
+  id               String                      @id @default(cuid())
+  organizationId   String
+  contractClauseId String
+  provider         String
+  model            String
+  dimension        Int
+  vector           Float[]
+  /**
+   * §Phase 12.1 - native pgvector column, `vector(256)` (VECTOR_NATIVE_DIMENSION
+   * in domain/ai/vector-search-config.ts - matches HASHING_TRICK_DEFAULT_DIMENSION,
+   * the Development embedding provider's actual dimension; NOT an arbitrary
+   * guess like 1536). pgvector requires one FIXED width per column, so this
+   * is only ever populated for rows whose `dimension` column equals 256 -
+   * see vector-backfill.ts. A row from a future provider with a different
+   * dimension permanently relies on the `vector` Float[] fallback above
+   * instead (a dimension change requires a new migration + full re-backfill,
+   * documented in docs/operations/ai-platform.md).
+   * `Unsupported` because Prisma Client cannot read/write a pgvector column
+   * directly - every access goes through raw SQL (see
+   * pgvector-clause-search-provider.ts, vector-backfill.ts). Prisma migrate
+   * cannot generate DDL for this type either, so the migration that adds it
+   * is hand-written raw SQL (see prisma/migrations/*_pgvector_clause_embeddings).
+   */
+  vectorNative     Unsupported("vector(256)")?
+  /**
+   * SHA-256 of the clause's normalizedText at generation time - the staleness signal recover-stale-embeddings-like logic compares against the clause's CURRENT normalizedText hash.
+   */
+  checksum         String
+  embeddingVersion Int                         @default(1)
+  isLatest         Boolean                     @default(true)
+  createdAt        DateTime                    @default(now())
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contractClause ContractClause @relation(fields: [contractClauseId], references: [id], onDelete: Cascade)
+
+  @@unique([contractClauseId, embeddingVersion])
+  @@index([organizationId, contractClauseId, isLatest])
+  // Hybrid search's vector-search leg scans every org-scoped `isLatest`
+  // row - this index keeps that scan cheap even before/without a pgvector
+  // ANN index (see docs/operations/ai-platform.md).
+  @@index([organizationId, isLatest])
+  @@map("clause_embeddings")
+}
+
+/**
+ * The embedding queue - same FOR UPDATE SKIP LOCKED claim shape as
+ * ContractExtractionJob/ClauseSegmentationJob (see
+ * server/repositories/embedding-job-repository.ts). `inputChecksum` is
+ * the clause's normalizedText hash at enqueue time; the unique
+ * constraint below means re-saving a clause with unchanged text is a
+ * silent no-op (never a duplicate job), matching every other job queue's
+ * idempotency shape in this codebase.
+ */
+model EmbeddingJob {
+  id               String             @id @default(cuid())
+  organizationId   String
+  contractClauseId String
+  status           EmbeddingJobStatus @default(PENDING)
+  attempt          Int                @default(0)
+  maxAttempts      Int                @default(3)
+  inputChecksum    String
+  provider         String?
+  model            String?
+
+  lockedAt DateTime?
+  lockedBy String?
+
+  startedAt    DateTime?
+  completedAt  DateTime?
+  failedAt     DateTime?
+  errorCode    String?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contractClause ContractClause @relation(fields: [contractClauseId], references: [id], onDelete: Cascade)
+
+  @@unique([contractClauseId, inputChecksum])
+  @@index([status, createdAt])
+  @@index([organizationId, status])
+  @@map("embedding_jobs")
+}
+
+enum ConversationRole {
+  USER
+  ASSISTANT
+}
+
+/**
+ * Org- and user-scoped chat history for the `/ai` screen. Never shared across organizations - every query path filters by organizationId (see features/ai/server).
+ */
+model Conversation {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  title          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages     Message[]
+
+  @@index([organizationId, userId, updatedAt])
+  @@map("ai_conversations")
+}
+
+/**
+ * `content` for an ASSISTANT message is the final, already citation-checked
+ * answer (see domain/ai/hallucination-guard.ts) - never a raw, unchecked
+ * LLM completion. USER messages carry no citations (a question needs none).
+ */
+model Message {
+  id             String           @id @default(cuid())
+  conversationId String
+  organizationId String
+  role           ConversationRole
+  content        String
+  createdAt      DateTime         @default(now())
+
+  conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  citations    MessageCitation[]
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+/**
+ * §Citation - every ASSISTANT paragraph must resolve to at least one of
+ * these (see domain/ai/citation.ts's assertCitationsPresent()).
+ * Deliberately denormalized (contractTitle/clauseNumber copied in, not
+ * just looked up via contractClauseId) and carries NO foreign key to
+ * ContractClause/Contract - a citation is a permanent historical record of
+ * what evidence was actually shown to the user for this specific answer,
+ * and must keep rendering correctly even if the underlying clause is
+ * later edited or the contract deleted (matches the "never rewritten"
+ * philosophy of ClauseEmbedding's own versioning above).
+ */
+model MessageCitation {
+  id               String   @id @default(cuid())
+  messageId        String
+  contractClauseId String?
+  contractId       String
+  contractTitle    String
+  clauseNumber     String?
+  /**
+   * Capped at 500 chars, application + DB - never the full clause text (§Security "조항 원문 외부 유출 금지" - only enough of the source sentence to substantiate the citation).
+   */
+  evidenceText     String   @db.VarChar(500)
+  score            Decimal? @db.Decimal(6, 5)
+  createdAt        DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("ai_message_citations")
+}
+
+/**
+ * §Organization Memory - aggregate, org-wide counters only. `patternKey`
+ * is always a coarse, closed-vocabulary bucket (a ClauseType enum value,
+ * or one of a fixed set of question-category labels - see
+ * domain/ai/question-category.ts) - NEVER a raw question string, clause
+ * text, or any per-user identifier. `@@unique` on (organizationId,
+ * patternType, patternKey) makes every update an increment-in-place, so
+ * this table's row count is bounded by (org count x pattern types x fixed
+ * vocabulary size), never by conversation/message volume.
+ */
+model AiSearchPattern {
+  id             String   @id @default(cuid())
+  organizationId String
+  patternType    String
+  patternKey     String
+  count          Int      @default(1)
+  lastSeenAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, patternType, patternKey])
+  @@index([organizationId, patternType, count])
+  @@map("ai_search_patterns")
+}

@@ -1,0 +1,181 @@
+# Local development PostgreSQL for ClauseBase.
+#
+# Credentials below are development-only and must never be reused in any
+# deployed environment. Production databases must use secrets management
+# (e.g. environment variables injected by the hosting platform), never the
+# values in this file.
+# Phase 11 Part A - resource limits/ulimits/tmpfs below are conservative,
+# documented STARTING POINTS for a small single-instance deployment, not a
+# tuned production number - actual sizing depends on data volume and
+# concurrent load; adjust `deploy.resources` per service to your real
+# workload before relying on this in production. `deploy.resources` is
+# honored by a plain `docker compose up` (Compose v2, no Swarm required).
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: clausebase-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: clausebase
+      POSTGRES_USER: clausebase
+      POSTGRES_PASSWORD: development-only-password
+    ports:
+      - "5432:5432"
+    volumes:
+      - clausebase_postgres_data:/var/lib/postgresql/data
+      # Creates the clausebase_test database on first container init, so
+      # integration tests never run against the main dev database.
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clausebase -d clausebase"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 1g }
+        reservations: { memory: 256m }
+
+  # Phase 10C - local parity for RATE_LIMITER=redis (src/server/services/rate-limit).
+  # Always started by `docker compose up -d` alongside postgres (no profile) -
+  # harmless if unused (RATE_LIMITER=memory, the default, never connects to it).
+  redis:
+    image: redis:8-alpine
+    container_name: clausebase-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m }
+        reservations: { memory: 64m }
+
+  # Phase 10C - S3-compatible storage for FILE_STORAGE_DRIVER=s3 local/CI
+  # testing (src/server/storage) - never used unless explicitly configured;
+  # local dev defaults to FILE_STORAGE_DRIVER=local (no bucket needed at all).
+  minio:
+    image: minio/minio:latest
+    container_name: clausebase-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: clausebase
+      MINIO_ROOT_PASSWORD: development-only-password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - clausebase_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m }
+        reservations: { memory: 128m }
+
+  # --- Phase 10C - full-stack runtime smoke test (§12-15). Never started by
+  # a plain `docker compose up -d` - the "smoke" profile keeps normal local
+  # dev (just postgres/redis/minio) unaffected. Invoke explicitly:
+  #
+  #   docker compose --profile smoke run --rm migrate
+  #   docker compose --profile smoke up -d app
+  #   pnpm exec dotenv -e .env.smoke -- pnpm smoke:test   # host-side, see below
+  #   docker compose --profile smoke down
+  #
+  # `migrate` deliberately builds the Dockerfile's `builder` stage, not the
+  # final `runner` stage `app` uses - `runner` only ever contains the
+  # standalone Next.js server + static assets (§13's "최소 파일"), which
+  # traces in @prisma/client's generated runtime but never the `prisma` CLI
+  # binary, prisma/schema.prisma, or prisma/migrations - none of which
+  # `next build` reads at runtime. `builder` has the full repo (`COPY . .`)
+  # and full node_modules (including devDependencies), so it is the only
+  # stage that can actually run `prisma migrate deploy`.
+  #
+  # `smoke-test` (scripts/smoke-test.ts) intentionally runs on the HOST, not
+  # as its own container - it only needs `fetch` against the `app`
+  # container's published port and is not part of the production image; see
+  # docs/operations/deployment.md's smoke-test step for the exact command.
+  # ---------------------------------------------------------------------
+
+  migrate:
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    command: ["pnpm", "exec", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://clausebase:development-only-password@postgres:5432/clausebase?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Deliberately NOT `unless-stopped` - this is a one-shot job
+    # (`docker compose run --rm migrate`), never a long-running service;
+    # auto-restarting a migration container would repeatedly re-run
+    # `prisma migrate deploy` forever, which is harmless (idempotent) but
+    # pointless and confusing in `docker compose ps` output.
+    restart: "no"
+
+  app:
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://clausebase:development-only-password@postgres:5432/clausebase?schema=public
+      AUTH_SECRET: smoke-test-only-secret-not-for-production-use
+      AUTH_URL: http://localhost:3000
+      APP_URL: http://localhost:3000
+      FILE_STORAGE_DRIVER: local
+      RATE_LIMITER: redis
+      REDIS_URL: redis://redis:6379
+      # Smoke-only overrides so the throwaway stack can exercise the full
+      # Playwright golden path (tests/e2e/) under NODE_ENV=production
+      # without wiring a real Postmark token/AI provider - every one of
+      # these guards refuses its "development"/"noop" driver in production
+      # otherwise (see the corresponding getXxx() in src/server/services/*).
+      # Never set these in an actual production deployment.
+      ALLOW_DEVELOPMENT_INVITATION_MAILER: "true"
+      ALLOW_DEVELOPMENT_ACCOUNT_SECURITY_MAILER: "true"
+      ALLOW_NOOP_MALWARE_SCANNER: "true"
+      ALLOW_DEVELOPMENT_EXTRACTION_PROVIDER: "true"
+      ALLOW_DEVELOPMENT_CLAUSE_SEGMENTER: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Phase 11 Part A - writable /tmp backed by tmpfs (memory, never
+    # written to the (read-only-capable) container filesystem or the
+    # `storage` volume) - Next.js/various libs use OS temp dirs for
+    # transient work; this keeps that off the app's own persistent volume
+    # entirely. `size` caps it so a runaway temp-file writer cannot exhaust
+    # host memory.
+    tmpfs:
+      - /tmp:size=256m
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 1g }
+        reservations: { memory: 256m }
+
+volumes:
+  clausebase_postgres_data:
+  clausebase_minio_data:

@@ -1,0 +1,194 @@
+name: Staging deploy
+
+# Phase 10C §23-26 - deploy pipeline skeleton: backup -> migrate -> deploy ->
+# readiness -> smoke test, in that fixed order, with NO step allowed to run
+# if an earlier one failed (`needs:` chains below, no `continue-on-error`).
+#
+# Triggered automatically once docker.yml finishes successfully on main (so
+# staging always deploys the exact image that was just built and pushed -
+# never a locally re-built one), or manually via workflow_dispatch for a
+# re-deploy of a specific already-pushed SHA.
+on:
+  workflow_run:
+    workflows: ["Docker build and push"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "Git commit SHA of the already-pushed image to deploy (defaults to the triggering workflow_run's SHA)"
+        required: false
+
+# §24 - only one staging deploy in flight at a time, and a newer deploy
+# waits for the current one rather than cancelling it mid-migration
+# (cancel-in-progress: false) - an in-flight `prisma migrate deploy` must
+# never be killed partway through.
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  resolve-image:
+    name: Resolve image tag to deploy
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - id: resolve
+        run: |
+          SHA="${{ github.event.inputs.image_sha }}"
+          if [ -z "$SHA" ]; then
+            SHA="${{ github.event.workflow_run.head_sha }}"
+          fi
+          echo "Deploying image SHA: $SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  # §23 step 1 - back up the staging database BEFORE touching it, so a bad
+  # migration/deploy always has a known-good restore point (docs/operations/
+  # backup.md's own DR drill is what proves this restore path actually
+  # works, not this job).
+  backup:
+    name: Backup staging database
+    needs: resolve-image
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - name: pnpm backup:db (age-encrypted, real staging DB)
+        run: pnpm backup:db
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          BACKUP_ENCRYPTION_PROVIDER: age
+          BACKUP_AGE_RECIPIENTS: ${{ secrets.STAGING_BACKUP_AGE_RECIPIENTS }}
+          BACKUP_OUTPUT_DIR: ./backups
+          BACKUP_CONFIRM: "true"
+      - name: Upload backup manifest + encrypted archive as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-backup-${{ needs.resolve-image.outputs.sha }}
+          path: backups/
+          retention-days: 30
+
+  # §23 step 2 - `prisma migrate deploy` runs from the CI runner directly
+  # (full checkout + node_modules, including the `prisma` CLI) against
+  # STAGING_DATABASE_URL - never from inside the pushed runtime image, which
+  # (see docker-compose.yml's `migrate` service comment) deliberately does
+  # not contain the prisma CLI or the migrations directory at all.
+  migrate:
+    name: Run migrations
+    needs: [resolve-image, backup]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-image.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - name: prisma migrate deploy (staging)
+        run: pnpm exec prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  # §23 step 3 - deploy the already-built, already-migrated-against image.
+  # PLACEHOLDER: this repo's actual staging host/orchestrator is not defined
+  # in this codebase (no Kubernetes manifests, ECS task defs, or hosting
+  # config exist here) - wire the real rollout command in for whatever
+  # platform staging actually runs on (e.g. `kubectl set image ...`,
+  # `aws ecs update-service --force-new-deployment`, a `docker compose pull
+  # && docker compose up -d` over SSH, ...). The pipeline's ordering/gating
+  # around this step (backup -> migrate -> deploy -> readiness -> smoke) is
+  # the actual Phase 10C deliverable; the deploy command itself is
+  # infra-specific and intentionally left as a TODO.
+  deploy:
+    name: Deploy image to staging
+    needs: [resolve-image, migrate]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Deploy ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.resolve-image.outputs.sha }}
+        run: |
+          echo "TODO: wire in the real deploy command for staging's actual host/orchestrator."
+          echo "Image to deploy: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.resolve-image.outputs.sha }}"
+          exit 1
+
+  # §23 steps 4-5 / §25 - readiness poll, then the full smoke suite (infra
+  # probe + golden-path Playwright run) against the newly deployed instance.
+  smoke-test:
+    name: Readiness + smoke test
+    needs: [resolve-image, deploy]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+      # §25 - `pnpm smoke` runs the infra probe (live/ready), then ONLY
+      # tests/e2e/smoke.spec.ts (never the full e2e suite - that would
+      # create many non-synthetic-prefixed orgs against a real staging
+      # environment), against a single synthetic `@smoke-test.local`
+      # organization that it always deletes afterward, pass or fail.
+      - name: Smoke test (infra + golden path, synthetic org)
+        run: pnpm smoke
+        env:
+          SMOKE_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+          # Only used by this step's final cleanup sub-step
+          # (scripts/cleanup-smoke-data.ts) to delete the synthetic
+          # @smoke-test.local org/user it just created - scoped by email
+          # domain in that script, never touches any other row.
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-smoke-report-${{ needs.resolve-image.outputs.sha }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  mark-success:
+    name: Deploy succeeded
+    needs: [resolve-image, smoke-test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Staging deploy of ${{ needs.resolve-image.outputs.sha }} succeeded - all readiness/smoke checks passed."
