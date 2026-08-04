@@ -27,7 +27,7 @@
 # - see prisma.config.ts / src/server/db/client.ts - which talks to
 # Postgres through the plain `pg` driver instead of Prisma's Rust engine).
 
-FROM node:22-bookworm-slim AS base
+FROM node:26-bookworm-slim AS base
 RUN corepack enable
 
 # ---------------------------------------------------------------------------
