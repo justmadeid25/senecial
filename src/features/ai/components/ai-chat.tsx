@@ -127,7 +127,11 @@ export function AiChat() {
           </p>
         )}
         {messages.map((message, index) => (
-          <Card key={index} className={message.role === "user" ? "bg-muted" : ""}>
+          <Card
+            key={index}
+            data-testid={message.role === "assistant" ? "ai-message-assistant" : "ai-message-user"}
+            className={message.role === "user" ? "bg-muted" : ""}
+          >
             <CardContent className="space-y-2 pt-4">
               <p className="text-xs font-medium text-muted-foreground">
                 {message.role === "user" ? "나" : "AI"}

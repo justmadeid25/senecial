@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 
 import { expect, test } from "@playwright/test";
 
+import { cardByHeading } from "./helpers/scoping";
+
 /**
  * End-to-end coverage of the invitation -> MEMBER-permission flow this
  * Phase specifically adds. Unlike contracts-flow.spec.ts and
@@ -35,7 +37,7 @@ function kstDateInputValue(daysFromNow: number): string {
 
 /**
  * Runs the notification-generation CLI against the E2E test database
- * (.env.test) as a real child process - this is Node-level `child_process`
+ * (.env.e2e) as a real child process - this is Node-level `child_process`
  * usage in the test file itself, not a Prisma import, so it does not hit
  * the import.meta/ESM transform limitation that keeps Prisma out of these
  * spec files directly.
@@ -49,7 +51,7 @@ function kstDateInputValue(daysFromNow: number): string {
 function runNotificationGenerator() {
   execFileSync(
     "pnpm",
-    ["exec", "dotenv", "-e", ".env.test", "--", "tsx", "scripts/generate-notifications.ts", "--force"],
+    ["exec", "dotenv", "-e", ".env.e2e", "--", "tsx", "scripts/generate-notifications.ts", "--force"],
     {
       cwd: process.cwd(),
       stdio: "pipe",
@@ -134,15 +136,20 @@ test.describe.serial("invitation acceptance and MEMBER permission boundaries", (
     // The contract-level delete button is OWNER-only.
     await expect(page.getByRole("button", { name: "삭제" })).toHaveCount(0);
 
+    // §Phase 12.4 §2/§5 - see ai-conversation-flow.spec.ts's identical
+    // comment: guards against a real hydration race where setInputFiles()
+    // fires before the upload form's onChange handler attaches, leaving
+    // the "업로드" button permanently disabled.
+    await page.waitForLoadState("networkidle");
     await page.setInputFiles("#contract-file", {
       name: "member-upload.pdf",
       mimeType: "application/pdf",
       buffer: Buffer.from("%PDF-1.7\n%member upload test\n1 0 obj\n", "latin1"),
     });
     await page.getByRole("button", { name: "업로드" }).click();
-    // The filename now also appears in the "AI 및 문서 추출" table added in
-    // Phase 6, so this is no longer a unique match on the page.
-    await expect(page.getByText("member-upload.pdf").first()).toBeVisible();
+    // Scoped to the "첨부 파일" card - the same filename also appears in
+    // the separate "AI 및 문서 추출" table.
+    await expect(cardByHeading(page, "첨부 파일").getByText("member-upload.pdf")).toBeVisible({ timeout: 30_000 });
 
     // File-row delete button is also OWNER-only.
     const fileRow = page.getByRole("row").filter({ hasText: "member-upload.pdf" });

@@ -500,3 +500,96 @@ jobs:
             reports/e2e-repeat-report.json
             reports/e2e-repeat-report.md
           retention-days: 30
+
+  # §Phase 12.4 §13/§14 - the actual release gate: `pnpm release:verify` run
+  # exactly as documented (scripts/release-verify.ts), start to finish, in
+  # one job - so a human running the same command locally sees exactly
+  # what blocks a release. This intentionally overlaps with the more
+  # granular jobs above (quality-and-tests, migration-validation,
+  # ai-quality-gate, e2e-production-like) which stay in place for FAST
+  # parallel PR feedback (a typecheck failure surfaces in ~1 minute, not
+  # after waiting for a 10+ minute E2E run) - this job is the single
+  # source of truth for "is release:verify itself green", not a
+  # replacement for that parallelism.
+  #
+  # No external credentials needed - Postgres/pgvector/Redis run as
+  # GitHub-hosted service containers, identical to the jobs above. Real
+  # Postmark/S3 tests stay opt-in/skipped here (see nightly-real-infra.yml).
+  #
+  # One database (clausebase_e2e) for the whole job, not one-per-step -
+  # release:verify's steps run strictly sequentially (never concurrently),
+  # so sharing is safe: each step that needs a clean slate (vitest, the
+  # E2E run) already resets/truncates its own tables before using it. This
+  # is the one deliberate divergence from the dedicated-DB-per-test-type
+  # convention the other jobs use - acceptable here specifically because
+  # release:verify is designed to run end-to-end as a single sequential
+  # pipeline, never in parallel with itself.
+  release-verify:
+    name: release:verify (full release gate)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: clausebase_e2e
+          POSTGRES_USER: clausebase
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clausebase -d clausebase_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://clausebase:development-only-password@localhost:5432/clausebase_e2e?schema=public
+      AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000
+      AUTH_URL: http://localhost:3000
+      APP_URL: http://localhost:3000
+      FILE_STORAGE_DRIVER: local
+      RATE_LIMITER: redis
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      # Bootstraps the shared database BEFORE release:verify's own step 2
+      # (migration verifier) runs - that step expects an already-migrated
+      # database, never a bare empty one (it verifies checksums/indexes/
+      # columns, it does not itself apply migrations).
+      - name: Bootstrap database (prisma migrate deploy)
+        run: pnpm exec prisma migrate deploy
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: pnpm release:verify
+        run: pnpm release:verify
+      - name: Upload release:verify artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verify-reports
+          path: |
+            reports/
+            playwright-report/
+            test-results/
+          retention-days: 30

@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { Document, Packer, Paragraph } from "docx";
 import { expect, test } from "@playwright/test";
 
+import { cardByHeading } from "./helpers/scoping";
+
 /**
  * Full Phase 12 pipeline E2E coverage: upload -> extraction worker ->
  * segmentation worker -> embedding worker -> /ai chat (real streaming,
@@ -28,7 +30,7 @@ async function buildContractDocxBuffer(lines: string[]): Promise<Buffer> {
 function runWorker(scriptPath: string) {
   execFileSync(
     "pnpm",
-    ["exec", "dotenv", "-e", ".env.test", "--", "tsx", scriptPath, "--", "--limit=20"],
+    ["exec", "dotenv", "-e", ".env.e2e", "--", "tsx", scriptPath, "--", "--limit=20"],
     { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
   );
 }
@@ -86,13 +88,22 @@ test.describe.serial("AI conversation: real citation + hallucination-guard fallb
     ]);
 
     await page.goto(contractUrl);
+    // §Phase 12.4 §2/§5 - waits for the page to settle (chunks/RSC payload
+    // loaded, React hydrated) before interacting with the file input.
+    // Without this, setInputFiles() can occasionally fire its change event
+    // before hydration attaches the form's onChange handler, leaving the
+    // "업로드" button permanently disabled (a real bug found this way -
+    // Playwright's own click() retry already waits the full test timeout
+    // and the button never recovers, so this is a genuine missed event,
+    // not merely "needs a longer wait").
+    await page.waitForLoadState("networkidle");
     await page.setInputFiles("#contract-file", {
       name: "ai-e2e-source.docx",
       mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       buffer: docxBuffer,
     });
     await page.getByRole("button", { name: "업로드" }).click();
-    await expect(page.getByText("ai-e2e-source.docx").first()).toBeVisible({ timeout: 45_000 });
+    await expect(cardByHeading(page, "첨부 파일").getByText("ai-e2e-source.docx")).toBeVisible({ timeout: 45_000 });
 
     const fileRow = page.getByRole("row").filter({ hasText: "ai-e2e-source.docx" });
     await fileRow.getByRole("button", { name: "정보 추출" }).click();
@@ -119,9 +130,16 @@ test.describe.serial("AI conversation: real citation + hallucination-guard fallb
     await page.getByPlaceholder("예: 이 계약의 해지 조건은 무엇인가요?").fill("계약을 해지하려면 어떻게 해야 하나요?");
     await page.getByRole("button", { name: "질문하기" }).click();
 
-    await expect(page.getByText("해지").first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("근거").first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(contractTitle).first()).toBeVisible({ timeout: 15_000 });
+    // Scoped to the assistant's own message card (data-testid="ai-message-assistant")
+    // rather than an unscoped page-wide text match - both the input's own
+    // placeholder ("...해지 조건은...") and the echoed user question
+    // (role="user" card, same "해지" substring) are real, separate matches
+    // for "해지" elsewhere on this page, so an unscoped .first() could pass
+    // without ever inspecting the actual AI answer.
+    const assistantMessage = page.getByTestId("ai-message-assistant").last();
+    await expect(assistantMessage).toContainText("해지", { timeout: 15_000 });
+    await expect(assistantMessage).toContainText("근거", { timeout: 15_000 });
+    await expect(assistantMessage).toContainText(contractTitle, { timeout: 15_000 });
   });
 
   test("asks an unrelated question and receives the fixed hallucination-guard fallback, never a guess", async ({
@@ -135,6 +153,8 @@ test.describe.serial("AI conversation: real citation + hallucination-guard fallb
       .fill("오늘 서울 날씨는 어떤가요?");
     await page.getByRole("button", { name: "질문하기" }).click();
 
-    await expect(page.getByText("근거를 충분히 찾지 못했습니다").first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId("ai-message-assistant").last()).toContainText("근거를 충분히 찾지 못했습니다", {
+      timeout: 15_000,
+    });
   });
 });

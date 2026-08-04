@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { Document, Packer, Paragraph } from "docx";
 import { expect, test } from "@playwright/test";
 
+import { cardByHeading } from "./helpers/scoping";
+
 /**
  * Full extraction pipeline E2E coverage: upload -> start job -> worker CLI
  * (a real child process, like runNotificationGenerator() in
@@ -44,7 +46,7 @@ function runExtractionWorker() {
       "exec",
       "dotenv",
       "-e",
-      ".env.test",
+      ".env.e2e",
       "--",
       "tsx",
       "scripts/process-extraction-jobs.ts",
@@ -120,6 +122,11 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
   test("owner uploads a file and starts an extraction job (PENDING)", async ({ page }) => {
     await logIn(page, ownerEmail);
     await page.goto(contractUrl);
+    // §Phase 12.4 §2/§5 - see ai-conversation-flow.spec.ts's identical
+    // comment: guards against a real hydration race where setInputFiles()
+    // fires before the upload form's onChange handler attaches, leaving
+    // the "업로드" button permanently disabled.
+    await page.waitForLoadState("networkidle");
 
     await page.setInputFiles("#contract-file", {
       name: "extraction-source.docx",
@@ -127,7 +134,9 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
       buffer: goodDocxBuffer,
     });
     await page.getByRole("button", { name: "업로드" }).click();
-    await expect(page.getByText("extraction-source.docx").first()).toBeVisible();
+    // Scoped to the "첨부 파일" card - the same filename also appears in
+    // the separate "AI 및 문서 추출" table.
+    await expect(cardByHeading(page, "첨부 파일").getByText("extraction-source.docx")).toBeVisible({ timeout: 30_000 });
 
     const fileRow = page.getByRole("row").filter({ hasText: "extraction-source.docx" });
     await fileRow.getByRole("button", { name: "정보 추출" }).click();
@@ -243,7 +252,7 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
 
     await expect(page.getByRole("heading", { name: `${suggestedTitle} - 검토 반영` })).toBeVisible();
     await expect(page.getByText(contractNumber)).toBeVisible();
-    await expect(page.getByText(counterpartyName).first()).toBeVisible();
+    await expect(cardByHeading(page, "계약 기본정보").getByText(counterpartyName)).toBeVisible();
     // autoRenewal was REJECTED during review - the contract's original
     // manually-set value ("아니오", the create-form default) must survive.
     await expect(page.getByText("아니오")).toBeVisible();
@@ -273,13 +282,14 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
 
     await logIn(page, memberEmail);
     await page.goto(contractUrl);
+    await page.waitForLoadState("networkidle");
     await page.setInputFiles("#contract-file", {
       name: "member-source.docx",
       mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       buffer: secondDocxBuffer,
     });
     await page.getByRole("button", { name: "업로드" }).click();
-    await expect(page.getByText("member-source.docx").first()).toBeVisible();
+    await expect(cardByHeading(page, "첨부 파일").getByText("member-source.docx")).toBeVisible({ timeout: 30_000 });
 
     const memberFileRow = page.getByRole("row").filter({ hasText: "member-source.docx" });
     await memberFileRow.getByRole("button", { name: "정보 추출" }).click();
@@ -320,6 +330,7 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
   }) => {
     await logIn(page, ownerEmail);
     await page.goto(contractUrl);
+    await page.waitForLoadState("networkidle");
 
     await page.setInputFiles("#contract-file", {
       name: "broken-source.docx",
@@ -327,7 +338,7 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
       buffer: buildFakeDocxBuffer(),
     });
     await page.getByRole("button", { name: "업로드" }).click();
-    await expect(page.getByText("broken-source.docx").first()).toBeVisible();
+    await expect(cardByHeading(page, "첨부 파일").getByText("broken-source.docx")).toBeVisible({ timeout: 30_000 });
 
     const brokenFileRow = page.getByRole("row").filter({ hasText: "broken-source.docx" });
     await brokenFileRow.getByRole("button", { name: "정보 추출" }).click();

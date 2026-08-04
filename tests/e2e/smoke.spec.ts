@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { cardByHeading } from "./helpers/scoping";
+
 /**
  * Phase 11 Part D - post-deploy golden-path smoke test: signup -> login ->
  * contract create -> file upload -> file download -> analytics, all
@@ -73,6 +75,11 @@ test.describe.serial("smoke: signup -> login -> contract -> upload -> download -
   test("uploads a file to the contract", async ({ page }) => {
     await logIn(page);
     await page.goto(contractUrl);
+    // §Phase 12.4 §2/§5 - see ai-conversation-flow.spec.ts's identical
+    // comment: guards against a real hydration race where setInputFiles()
+    // fires before the upload form's onChange handler attaches, leaving
+    // the "업로드" button permanently disabled.
+    await page.waitForLoadState("networkidle");
     await page.setInputFiles("#contract-file", {
       name: "smoke-test.pdf",
       mimeType: "application/pdf",
@@ -84,7 +91,7 @@ test.describe.serial("smoke: signup -> login -> contract -> upload -> download -
     // appears, and (only in `next dev`'s on-demand compilation - not a
     // real production server) can also be waiting on first-hit route
     // compilation.
-    await expect(page.getByText("smoke-test.pdf").first()).toBeVisible({ timeout: 15_000 });
+    await expect(cardByHeading(page, "첨부 파일").getByText("smoke-test.pdf")).toBeVisible({ timeout: 30_000 });
   });
 
   test("downloads the uploaded file", async ({ page }) => {

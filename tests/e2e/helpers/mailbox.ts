@@ -30,7 +30,12 @@ export async function readLatestMailboxLink(
   messageType: string,
   options: { timeoutMs?: number } = {}
 ): Promise<string> {
-  const timeoutMs = options.timeoutMs ?? 5000;
+  // §Phase 12.4 §11 - raised from 5000ms after real evidence (Stage 1 runs
+  // under real system memory/CPU contention on this host) of this simple
+  // file write/read occasionally taking longer than 5s - not a code bug
+  // (the write is a plain, synchronous-per-call fs.appendFile), a real
+  // measured latency tail under load.
+  const timeoutMs = options.timeoutMs ?? 15000;
   const file = path.join(MAILBOX_DIR, `${sanitizeFilename(email)}.jsonl`);
   const deadline = Date.now() + timeoutMs;
 

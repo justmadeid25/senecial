@@ -26,14 +26,26 @@ function sanitizeFilename(email: string): string {
  * the same test address across a single E2E run are all preserved - the
  * reader (tests/e2e/helpers/mailbox.ts) picks the latest matching entry.
  *
- * NODE_ENV==="production" is an explicit, redundant safety net here even
- * though the development mailer classes themselves are already refused in
- * production without an ALLOW_DEVELOPMENT_* override - this function must
- * never write real user data to disk under any circumstance, defense in
- * depth.
+ * NODE_ENV==="production" defense-in-depth here mirrors the SAME
+ * authorization the development mailer classes themselves already
+ * require (getInvitationMailer()/getAccountSecurityMailer() refuse to
+ * even construct DevelopmentInvitationMailer/DevelopmentAccountSecurityMailer
+ * in production without their respective ALLOW_DEVELOPMENT_*_MAILER
+ * override) - by the time this function runs, that authorization has
+ * already been granted, so re-checking bare NODE_ENV here (ignoring
+ * those flags) would silently no-op even an explicitly-authorized
+ * production-like E2E run (§Phase 12.4 §2 - real bug found this way:
+ * `next start` unconditionally forces NODE_ENV=production, so this used
+ * to unconditionally skip every mailbox write in the production-like E2E
+ * suite, deterministically failing every mail-delivery-flow.spec.ts test
+ * that reads it back). Still refuses by default in production - only an
+ * explicit override authorizes the write, never a bare NODE_ENV check.
  */
 export async function writeTestMailboxEntry(entry: TestMailboxEntry): Promise<void> {
-  if (process.env.NODE_ENV === "production") {
+  const developmentMailerAuthorized =
+    process.env.ALLOW_DEVELOPMENT_INVITATION_MAILER === "true" ||
+    process.env.ALLOW_DEVELOPMENT_ACCOUNT_SECURITY_MAILER === "true";
+  if (process.env.NODE_ENV === "production" && !developmentMailerAuthorized) {
     return;
   }
 

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { cardByHeading } from "./helpers/scoping";
+
 /**
  * As with contracts-flow.spec.ts, MEMBER-role restrictions (file delete,
  * counterparty delete) are not re-tested here for the same reason: there is
@@ -120,6 +122,11 @@ test.describe.serial("counterparty CRUD, file upload/download/delete, and isolat
   test("owner uploads a file to the linked contract and sees it in the file list", async ({ page }) => {
     await logIn(page, ownerEmail);
     await page.goto(contractUrl);
+    // §Phase 12.4 §2/§5 - see ai-conversation-flow.spec.ts's identical
+    // comment: guards against a real hydration race where setInputFiles()
+    // fires before the upload form's onChange handler attaches, leaving
+    // the "업로드" button permanently disabled.
+    await page.waitForLoadState("networkidle");
 
     await page.setInputFiles("#contract-file", {
       name: "e2e-계약서.pdf",
@@ -127,9 +134,10 @@ test.describe.serial("counterparty CRUD, file upload/download/delete, and isolat
       buffer: PDF_BUFFER,
     });
     await page.getByRole("button", { name: "업로드" }).click();
-    // The filename now also appears in the "AI 및 문서 추출" table added in
-    // Phase 6, so this is no longer a unique match on the page.
-    await expect(page.getByText("e2e-계약서.pdf").first()).toBeVisible();
+    // The filename also appears in the "AI 및 문서 추출" table (added Phase
+    // 6) - scoped to the "첨부 파일" card specifically, not an unscoped
+    // .first() that would pass regardless of which table actually shows it.
+    await expect(cardByHeading(page, "첨부 파일").getByText("e2e-계약서.pdf")).toBeVisible({ timeout: 30_000 });
   });
 
   test("owner downloads the uploaded file", async ({ page }) => {
@@ -147,9 +155,9 @@ test.describe.serial("counterparty CRUD, file upload/download/delete, and isolat
     await logIn(page, ownerEmail);
     await page.goto(contractUrl);
 
-    // The filename now also appears in the "AI 및 문서 추출" table added in
-    // Phase 6, so this is no longer a unique match on the page.
-    await expect(page.getByText("e2e-계약서.pdf").first()).toBeVisible();
+    // Scoped to the "첨부 파일" card - the same filename also appears in
+    // the separate "AI 및 문서 추출" table.
+    await expect(cardByHeading(page, "첨부 파일").getByText("e2e-계약서.pdf")).toBeVisible({ timeout: 30_000 });
     // Scoped to the file's own table row - the page also has a top-level
     // "삭제" button for deleting the whole contract, with the same label.
     const fileRow = page.getByRole("row").filter({ hasText: "e2e-계약서.pdf" });

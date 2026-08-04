@@ -1,7 +1,9 @@
 import "dotenv/config";
 import { execSync, spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+import { cleanupE2eStorage, cleanupRedisPrefix, cleanupTestMailbox } from "./lib/e2e-environment-checks";
 
 /**
  * §Phase 12.3 Part B - production-like E2E orchestrator. Distinct from
@@ -26,7 +28,13 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 const LIVE_TIMEOUT_MS = 60_000;
 const READY_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 1_000;
-const MAX_CAPTURED_LOG_LINES = 300;
+// §Phase 12.4 §2 - 300 was too small to be useful for root-causing a
+// failure anywhere but the very end of a multi-minute, 101-test run (the
+// captured buffer is a ring buffer - by the time a run finishes, only the
+// LAST ~300 lines survive, discarding everything from earlier tests
+// entirely). Raised substantially so a failure early or mid-run still has
+// its own server-side log context available in the persisted log file.
+const MAX_CAPTURED_LOG_LINES = 20_000;
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -116,6 +124,16 @@ async function main(): Promise<void> {
   const runId = process.env.E2E_RUN_ID ?? `${Date.now()}-${process.pid}`;
   console.log(`[e2e-prod] run id: ${runId}, project: ${project}${spec ? `, spec: ${spec}` : ""}`);
 
+  // §Phase 12.4 §1 - fail fast, before touching the DB or building
+  // anything, if the environment is not clean (port occupied, DB not
+  // dedicated, Postgres/Redis contention, leftover processes). A run
+  // that starts anyway risks exactly the resource-contention confound
+  // that made Phase 12.3's second run uninterpretable.
+  if (process.env.E2E_SKIP_PREFLIGHT !== "true") {
+    console.log("[e2e-prod] running preflight checks...");
+    execSync("pnpm exec tsx scripts/e2e-preflight.ts", { stdio: "inherit" });
+  }
+
   console.log("[e2e-prod] resetting E2E database...");
   execSync("pnpm exec tsx scripts/e2e-db-reset.ts", { stdio: "inherit" });
 
@@ -125,6 +143,27 @@ async function main(): Promise<void> {
   } else {
     console.log("[e2e-prod] --skip-build set, reusing the existing .next build.");
   }
+
+  // §Phase 12.4 §2 - REAL bug found here: `next start` prints (and this
+  // project ignored) "next start does not work with output: standalone
+  // configuration. Use node .next/standalone/server.js instead." -
+  // Next.js's own warning was correct: `next start` served pages/APIs
+  // fine, but every real file-upload E2E test (Server Action + multipart
+  // FormData) hung indefinitely with the upload button stuck "업로드 중..."
+  // and no server-side error ever logged, while every non-upload test
+  // passed - exactly the shape of a request-body-handling gap specific to
+  // running the wrong server entrypoint against a standalone build. The
+  // Dockerfile's own `runner` stage (the actual verified production path -
+  // see its own header comment) has ALWAYS used `node server.js` from
+  // `.next/standalone/`, never `next start` - this now matches that exact,
+  // already-verified path instead of an unverified shortcut.
+  console.log("[e2e-prod] assembling standalone server output...");
+  execSync("node scripts/docker-copy-instrumentation.mjs", { stdio: "inherit" });
+  const standaloneDir = path.join(process.cwd(), ".next", "standalone");
+  await rm(path.join(standaloneDir, ".next", "static"), { recursive: true, force: true });
+  await cp(path.join(process.cwd(), ".next", "static"), path.join(standaloneDir, ".next", "static"), { recursive: true });
+  await rm(path.join(standaloneDir, "public"), { recursive: true, force: true });
+  await cp(path.join(process.cwd(), "public"), path.join(standaloneDir, "public"), { recursive: true });
 
   const storagePath = path.join(process.cwd(), "tmp", "e2e-storage", `prod-${runId}`);
   await mkdir(storagePath, { recursive: true });
@@ -136,10 +175,14 @@ async function main(): Promise<void> {
     AUTH_URL: BASE_URL,
     APP_URL: BASE_URL,
     LOCAL_STORAGE_PATH: storagePath,
-    // §5/§6 - this server run is deliberately production-like (NODE_ENV
-    // forced to "production" by `next start` itself), so every ALLOW_*
-    // override below is the SAME explicit, logged, opt-in escape hatch a
-    // real operator would need - never a silent default. See
+    // §Phase 12.4 §2 - `node server.js` (unlike `next start`) does NOT
+    // force NODE_ENV itself - this must be set explicitly to keep the run
+    // genuinely production-like (matches the Dockerfile runner stage's own
+    // `ENV NODE_ENV=production`).
+    NODE_ENV: "production",
+    // §5/§6 - this server run is deliberately production-like, so every
+    // ALLOW_* override below is the SAME explicit, logged, opt-in escape
+    // hatch a real operator would need - never a silent default. See
     // ALLOW_HTTP_IN_PRODUCTION_TESTING's own docstring for why that one
     // specifically may NEVER be used for a real deployment.
     ALLOW_HTTP_IN_PRODUCTION_TESTING: "true",
@@ -160,7 +203,7 @@ async function main(): Promise<void> {
     AI_CACHE_PROVIDER: process.env.AI_CACHE_PROVIDER ?? "redis",
   };
 
-  console.log(`[e2e-prod] starting production server (next start) on port ${PORT}...`);
+  console.log(`[e2e-prod] starting production server (node .next/standalone/server.js) on port ${PORT}...`);
   const capturedLogLines: string[] = [];
   function captureOutput(buf: Buffer): void {
     for (const line of buf.toString("utf8").split("\n")) {
@@ -170,7 +213,13 @@ async function main(): Promise<void> {
     }
   }
 
-  const child = spawn("pnpm", ["exec", "next", "start", "-p", PORT, "-H", "127.0.0.1"], {
+  // §Phase 12.4 §2 - runs the SAME entrypoint the Dockerfile's `runner`
+  // stage runs (`node server.js`, cwd = the standalone output directory) -
+  // not `next start`, which Next.js itself warns is incompatible with
+  // `output: "standalone"` and which caused the real file-upload hang
+  // documented above.
+  const child = spawn("node", ["server.js"], {
+    cwd: standaloneDir,
     env: serverEnv,
     shell: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -219,6 +268,20 @@ async function main(): Promise<void> {
     console.error(capturedLogLines.join("\n"));
   }
 
+  // §Phase 12.4 §2 - server logs must be available for root-cause analysis
+  // of an ORDINARY Playwright test failure too, not only a server crash or
+  // a never-became-ready failure (the only two paths dumpCapturedLogs() was
+  // previously reachable from) - without this, a failure like "file upload
+  // button stayed disabled" left no way to check whether the SERVER saw
+  // anything unusual during that request. Always written, pass or fail, to
+  // a fixed path so the caller/CI can pick it up as an artifact regardless
+  // of outcome.
+  async function persistCapturedLogs(): Promise<void> {
+    const logPath = path.join(process.cwd(), "reports", "e2e-prod-server.log");
+    await mkdir(path.dirname(logPath), { recursive: true });
+    await writeFile(logPath, capturedLogLines.join("\n"), "utf8");
+  }
+
   try {
     await waitForLive();
     const readyBody = await waitForReady();
@@ -247,6 +310,7 @@ async function main(): Promise<void> {
   }
 
   await stopServer();
+  await persistCapturedLogs();
 
   if (serverCrashed) {
     console.error(`[e2e-prod] SERVER CRASHED during the run (exit code ${crashExitCode})`);
@@ -255,8 +319,35 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(`[e2e-prod] done. Playwright exit code: ${playwrightExitCode}`);
-  process.exitCode = playwrightExitCode;
+  // §Phase 12.4 §8 - the suite's own responsibility to leave 0 test
+  // organizations/data/storage/mailbox/Redis-key state behind, not
+  // something deferred to the NEXT run's pre-flight reset. Reuses
+  // e2e-db-reset.ts's truncate (idempotent - migrate deploy is a no-op
+  // when already up to date) as this run's own teardown, distinct in
+  // intent from its use as a PRE-run reset.
+  console.log("[e2e-prod] post-run cleanup (DB truncate, storage, mailbox, Redis prefix)...");
+  execSync("pnpm exec tsx scripts/e2e-db-reset.ts", { stdio: "inherit" });
+  const storageDeleted = await cleanupE2eStorage();
+  const mailboxDeleted = await cleanupTestMailbox();
+  const redisDeleted = await cleanupRedisPrefix(serverEnv.REDIS_URL!);
+  console.log(`[e2e-prod] cleaned: storage dirs=${storageDeleted}, mailbox files=${mailboxDeleted}, redis keys=${redisDeleted}`);
+
+  // §Phase 12.4 §8 - a cleanup failure is as severe as a test failure:
+  // it means this run leaked state (storage, Redis keys, mailbox files,
+  // an in-progress BatchExecution, an orphan process) that could corrupt
+  // the NEXT run's results. Runs even when Playwright itself already
+  // failed, so a real failure never masks a cleanup problem.
+  console.log("[e2e-prod] verifying cleanup...");
+  let cleanupExitCode = 0;
+  try {
+    execSync("pnpm exec tsx scripts/e2e-verify-cleanup.ts", { stdio: "inherit" });
+  } catch (error) {
+    cleanupExitCode = (error as { status?: number }).status ?? 1;
+  }
+
+  const finalExitCode = playwrightExitCode !== 0 ? playwrightExitCode : cleanupExitCode;
+  console.log(`[e2e-prod] done. Playwright exit code: ${playwrightExitCode}, cleanup exit code: ${cleanupExitCode}`);
+  process.exitCode = finalExitCode;
 }
 
 main().catch((error: unknown) => {

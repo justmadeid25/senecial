@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { Document, Packer, Paragraph } from "docx";
 import { expect, test } from "@playwright/test";
 
+import { cardByHeading } from "./helpers/scoping";
+
 /**
  * Full Phase 7 pipeline E2E coverage: extracted document -> segmentation job
  * -> worker CLI -> clause review (confirm/correct/reject) -> in-contract and
@@ -33,7 +35,7 @@ async function buildContractDocxBuffer(lines: string[]): Promise<Buffer> {
 function runExtractionWorker() {
   execFileSync(
     "pnpm",
-    ["exec", "dotenv", "-e", ".env.test", "--", "tsx", "scripts/process-extraction-jobs.ts", "--", "--limit=10"],
+    ["exec", "dotenv", "-e", ".env.e2e", "--", "tsx", "scripts/process-extraction-jobs.ts", "--", "--limit=10"],
     { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
   );
 }
@@ -46,7 +48,7 @@ function runClauseSegmentationWorker() {
       "exec",
       "dotenv",
       "-e",
-      ".env.test",
+      ".env.e2e",
       "--",
       "tsx",
       "scripts/process-clause-segmentation-jobs.ts",
@@ -61,7 +63,7 @@ function runClauseSegmentationWorker() {
 function runClauseReviewSignalGenerator() {
   execFileSync(
     "pnpm",
-    ["exec", "dotenv", "-e", ".env.test", "--", "tsx", "scripts/generate-clause-review-signals.ts"],
+    ["exec", "dotenv", "-e", ".env.e2e", "--", "tsx", "scripts/generate-clause-review-signals.ts"],
     { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
   );
 }
@@ -124,6 +126,11 @@ test.describe.serial("clause structuring, search, comparison, and review signals
   test("owner uploads a document and the extraction worker produces extracted text", async ({ page }) => {
     await logIn(page, ownerEmail);
     await page.goto(contractUrl);
+    // §Phase 12.4 §2/§5 - see ai-conversation-flow.spec.ts's identical
+    // comment: guards against a real hydration race where setInputFiles()
+    // fires before the upload form's onChange handler attaches, leaving
+    // the "업로드" button permanently disabled.
+    await page.waitForLoadState("networkidle");
 
     await page.setInputFiles("#contract-file", {
       name: "clause-source.docx",
@@ -131,7 +138,9 @@ test.describe.serial("clause structuring, search, comparison, and review signals
       buffer: docxBuffer,
     });
     await page.getByRole("button", { name: "업로드" }).click();
-    await expect(page.getByText("clause-source.docx").first()).toBeVisible();
+    // Scoped to the "첨부 파일" card - the same filename also appears in
+    // the separate "AI 및 문서 추출" table.
+    await expect(cardByHeading(page, "첨부 파일").getByText("clause-source.docx")).toBeVisible({ timeout: 30_000 });
 
     const fileRow = page.getByRole("row").filter({ hasText: "clause-source.docx" });
     await fileRow.getByRole("button", { name: "정보 추출" }).click();
@@ -164,7 +173,11 @@ test.describe.serial("clause structuring, search, comparison, and review signals
     await logIn(page, ownerEmail);
     await page.goto(contractUrl);
 
-    await expect(page.getByText("검토 필요").first()).toBeVisible();
+    // Scoped to the "계약 조항 분해" card (ClauseSegmentationSection renders
+    // its own status badge there, in a table keyed by extraction method/
+    // char-count, not by filename) - not the file-list row, which shows the
+    // (unrelated at this point) extraction job's own status.
+    await expect(cardByHeading(page, "계약 조항 분해").getByText("검토 필요")).toBeVisible();
     const clauseViewLink = page.getByRole("link", { name: "조항 보기" });
     await expect(clauseViewLink).toBeVisible();
     await clauseViewLink.click();
