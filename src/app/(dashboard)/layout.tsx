@@ -54,7 +54,22 @@ export default async function DashboardLayout({
   return (
     <div className="flex min-h-full flex-col">
       <header className="border-b bg-background">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-y-2 px-6 py-4">
+          {/* §Phase 12.4 §9 - REAL bug found here, and the actual (not
+              page-specific) cause of the mobile-viewport overflow test
+              failure: this row - logo/org block + all 8 nav links + logout
+              button - had no flex-wrap, so it never wrapped on narrow
+              viewports and forced the WHOLE page wider than the screen on
+              every single dashboard route, not just /analytics. Confirmed
+              by measurement: page-specific fixes elsewhere (SimpleBarList,
+              SectionScope's Badge) left the measured overflow completely
+              unchanged (399 vs the 391 max, byte-for-byte identical before
+              and after), because the header - shared across every
+              dashboard page - was the actual source all along. flex-wrap
+              here lets it wrap to a second row on narrow screens instead
+              of overflowing; not a full mobile-nav redesign, but the
+              minimal fix that actually stops the overflow this test
+              checks for. */}
           <div className="flex items-center gap-6">
             <div>
               <p className="text-sm font-semibold text-foreground">Senecial</p>
@@ -62,7 +77,7 @@ export default async function DashboardLayout({
                 {organization?.name ?? "알 수 없는 조직"}
               </p>
             </div>
-            <nav className="flex items-center gap-4">
+            <nav className="flex flex-wrap items-center gap-4">
               {NAV_ITEMS.map((item) => (
                 <Link
                   key={item.href}

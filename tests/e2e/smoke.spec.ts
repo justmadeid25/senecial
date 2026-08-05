@@ -37,11 +37,14 @@ async function logIn(page: import("@playwright/test").Page) {
 }
 
 test.describe.serial("smoke: signup -> login -> contract -> upload -> download -> analytics", () => {
-  // A more generous per-test timeout than this suite's default - a smoke
-  // run's first hits against each route can include `next dev`'s
-  // on-demand compilation (never a factor against a real production
-  // server, which this spec also runs against via SMOKE_BASE_URL).
-  test.setTimeout(60_000);
+  // §Phase 12.4 §10/§11 - raised from 60_000: smoke is the LAST of
+  // QUEUE_SPECS, still early enough in the production-like run that its
+  // own first upload measured the same up-to-60s cold-server latency as
+  // ai-conversation-flow/clause-intelligence-flow/extraction-flow's
+  // identical assertion (see scripts/run-e2e-prod.ts's warm-up comment) -
+  // 60_000 left no headroom once that assertion's own budget needed to
+  // reach 120_000.
+  test.setTimeout(150_000);
 
   test("signup creates the synthetic smoke-test account", async ({ page }) => {
     await page.goto("/signup");
@@ -91,7 +94,10 @@ test.describe.serial("smoke: signup -> login -> contract -> upload -> download -
     // appears, and (only in `next dev`'s on-demand compilation - not a
     // real production server) can also be waiting on first-hit route
     // compilation.
-    await expect(cardByHeading(page, "첨부 파일").getByText("smoke-test.pdf")).toBeVisible({ timeout: 30_000 });
+    // §Phase 12.4 §10/§11 - real measured cold-server latency, same class
+    // as ai-conversation-flow/clause-intelligence-flow/extraction-flow's
+    // identical assertions - see scripts/run-e2e-prod.ts's warm-up comment.
+    await expect(cardByHeading(page, "첨부 파일").getByText("smoke-test.pdf")).toBeVisible({ timeout: 60_000 });
   });
 
   test("downloads the uploaded file", async ({ page }) => {

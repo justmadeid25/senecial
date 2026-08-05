@@ -666,9 +666,10 @@ export default async function AnalyticsPage({
             </CardHeader>
             <CardContent className="space-y-2">
               {actionItems.map((item) => (
-                <div key={item.label} className="flex items-center justify-between border-b py-2 text-sm last:border-0">
-                  <span>{item.label}</span>
-                  <div className="flex items-center gap-3">
+                <div key={item.label} className="flex items-center justify-between gap-2 border-b py-2 text-sm last:border-0">
+                  {/* §Phase 12.4 §9 - same flex min-width fix as SimpleBarList's identical justify-between row. */}
+                  <span className="min-w-0 truncate">{item.label}</span>
+                  <div className="flex shrink-0 items-center gap-3">
                     <span className="font-medium tabular-nums">{item.count}건</span>
                     <Link href={item.href} className="text-primary hover:underline">
                       보기

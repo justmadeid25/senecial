@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-const MAILBOX_DIR = path.join(process.cwd(), ".test-mailbox");
+// Mirrors the SAME env override as src/server/services/mailbox/test-mailbox.ts
+// (see that file's own comment) - this reader's process.cwd() is already
+// the repo root in every current invocation path, but reading the same
+// env var here (rather than only in the writer) means the two can never
+// silently drift onto different directories again if that ever changes.
+const MAILBOX_DIR = process.env.TEST_MAILBOX_DIR ?? path.join(process.cwd(), ".test-mailbox");
 
 interface MailboxEntry {
   messageType: string;

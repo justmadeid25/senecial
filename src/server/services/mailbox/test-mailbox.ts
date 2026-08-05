@@ -1,7 +1,18 @@
 import { mkdir, appendFile } from "node:fs/promises";
 import path from "node:path";
 
-const MAILBOX_DIR = path.join(process.cwd(), ".test-mailbox");
+// §Phase 12.4 §2 - REAL bug found here: scripts/run-e2e-prod.ts spawns the
+// standalone server with `cwd: .next/standalone` (matches the Dockerfile
+// runner stage's own working directory), so a bare `process.cwd()` here
+// resolves to `.next/standalone`, not the repo root - every mailbox write
+// landed in `.next/standalone/.test-mailbox/`, while the Playwright reader
+// (tests/e2e/helpers/mailbox.ts, running from the repo root) polled
+// `<repo-root>/.test-mailbox/` and never found it, timing out on every
+// mail-delivery-flow.spec.ts test. `TEST_MAILBOX_DIR` mirrors
+// `LOCAL_STORAGE_PATH`'s own pattern: an absolute path computed once by the
+// orchestrator (which does have the correct cwd) and passed down via env,
+// never re-derived from this process's own (possibly different) cwd.
+const MAILBOX_DIR = process.env.TEST_MAILBOX_DIR ?? path.join(process.cwd(), ".test-mailbox");
 
 export interface TestMailboxEntry {
   messageType: string;

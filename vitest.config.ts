@@ -49,6 +49,14 @@ export default defineConfig({
           include: ["tests/**/*.test.ts"],
           exclude: QUEUE_TEST_FILES,
           testTimeout: 20000,
+          // §Phase 12.4 §11 - matches testTimeout, not vitest's 10s default.
+          // beforeAll/afterAll hooks run real Postgres creates/deletes under
+          // the same host DB-latency variance as the tests themselves (see
+          // QUEUE_TEST_FILES comment above and docs/operations/e2e-testing.md) -
+          // a real run measured a beforeAll exceed 10s under concurrent
+          // file-level parallelism (two DB writes logged at 8.3s/3.3s each
+          // via monitoring.slow_operation) with no actual bug involved.
+          hookTimeout: 20000,
         },
       },
       {
@@ -58,6 +66,7 @@ export default defineConfig({
           environment: "node",
           include: QUEUE_TEST_FILES,
           testTimeout: 20000,
+          hookTimeout: 20000,
           // Serial only within this project - see QUEUE_TEST_FILES comment.
           fileParallelism: false,
         },

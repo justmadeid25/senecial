@@ -175,6 +175,13 @@ async function main(): Promise<void> {
     AUTH_URL: BASE_URL,
     APP_URL: BASE_URL,
     LOCAL_STORAGE_PATH: storagePath,
+    // §Phase 12.4 §2 - REAL bug found here: without this, test-mailbox.ts
+    // (running inside the spawned server, cwd = standaloneDir below) wrote
+    // to `.next/standalone/.test-mailbox`, invisible to the Playwright
+    // reader running from the repo root - every mail-delivery-flow.spec.ts
+    // test timed out. Computed from THIS process's cwd (already the repo
+    // root), not the server's - see test-mailbox.ts's own comment.
+    TEST_MAILBOX_DIR: path.join(process.cwd(), ".test-mailbox"),
     // §Phase 12.4 §2 - `node server.js` (unlike `next start`) does NOT
     // force NODE_ENV itself - this must be set explicitly to keep the run
     // genuinely production-like (matches the Dockerfile runner stage's own
@@ -294,6 +301,35 @@ async function main(): Promise<void> {
     return;
   }
 
+  // §Phase 12.4 §10 - REAL cold/warm gap found here: a freshly-spawned
+  // `node server.js` answers its FIRST few real requests measurably slower
+  // than its 60th (V8 JIT has not yet optimized hot paths, the OS file
+  // cache holds none of .next/standalone's chunk files yet, Prisma's
+  // query-compiler has not yet compiled these query shapes) - direct
+  // repeated measurement of the exact same "upload a file, wait for it to
+  // appear" step against this same build showed ~33.7s/33.4s/32.3s when it
+  // was among the first real page loads after startup, vs 3.6s for the
+  // logically identical step ~60 tests into the same server's lifetime
+  // (see tests/e2e/counterparties-and-files-flow.spec.ts, which never
+  // failed). pg_stat_activity showed no blocked/slow query during a slow
+  // run and the server's own request log showed nothing pathological
+  // either - this is JIT/cache warm-up wall-clock time, not a stuck
+  // request or a code bug. A handful of cheap, unauthenticated GETs here
+  // (before Playwright's very first test) pays that one-time cost ONCE, up
+  // front, so every real test - including the first - already runs
+  // "warm", rather than each spec file's own first heavy interaction
+  // silently eating an unpredictable, sometimes-timeout-busting chunk of
+  // this cost.
+  console.log("[e2e-prod] warming up server (JIT/OS cache) before Playwright...");
+  for (const warmupPath of ["/", "/login", "/signup", "/forgot-password"]) {
+    try {
+      await fetch(`${BASE_URL}${warmupPath}`);
+    } catch {
+      // Best-effort - a warm-up request failing is not itself a test
+      // failure; the real tests below will surface any genuine problem.
+    }
+  }
+
   console.log(`[e2e-prod] running Playwright against ${BASE_URL} (project=${project})...`);
   const playwrightArgs = ["exec", "playwright", "test", `--project=${project}`];
   if (jsonOutput) playwrightArgs.push("--reporter=json");
@@ -303,7 +339,15 @@ async function main(): Promise<void> {
   try {
     execSync(`pnpm ${playwrightArgs.join(" ")}`, {
       stdio: jsonOutput ? ["ignore", "ignore", "inherit"] : "inherit",
-      env: { ...process.env, SMOKE_BASE_URL: BASE_URL, ...(jsonOutput ? { PLAYWRIGHT_JSON_OUTPUT_NAME: jsonOutput } : {}) },
+      env: {
+        ...process.env,
+        SMOKE_BASE_URL: BASE_URL,
+        // Same value as serverEnv.TEST_MAILBOX_DIR above - provably the
+        // same directory the server just wrote to, not two independent
+        // process.cwd()-based computations that happen to coincide.
+        TEST_MAILBOX_DIR: serverEnv.TEST_MAILBOX_DIR,
+        ...(jsonOutput ? { PLAYWRIGHT_JSON_OUTPUT_NAME: jsonOutput } : {}),
+      },
     });
   } catch (error) {
     playwrightExitCode = (error as { status?: number }).status ?? 1;

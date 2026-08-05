@@ -103,7 +103,20 @@ test.describe.serial("AI conversation: real citation + hallucination-guard fallb
       buffer: docxBuffer,
     });
     await page.getByRole("button", { name: "업로드" }).click();
-    await expect(cardByHeading(page, "첨부 파일").getByText("ai-e2e-source.docx")).toBeVisible({ timeout: 45_000 });
+    // §Phase 12.4 §10/§11 - this is the FIRST real upload of the whole
+    // production-like run (ai-conversation-flow runs first in QUEUE_SPECS
+    // order, right after server startup) - measured cold-server latency,
+    // not a hung request (see scripts/run-e2e-prod.ts's warm-up comment
+    // for the pg_stat_activity/server-log evidence). Confirmed NOT
+    // explained by other-process contention either: re-measured at 66s on
+    // an otherwise-idle machine (other apps closed, ~1% CPU) after the
+    // 60s bump and the GET-only server warm-up below still weren't enough
+    // - the warm-up primes read routes, not the write path (storage
+    // put()/Prisma insert/Redis rate-limit check) this step actually
+    // exercises for the first time. 120s is a real measured-worst-case
+    // budget, not a guess; test.setTimeout(180_000) above still leaves
+    // headroom for the rest of this test after it.
+    await expect(cardByHeading(page, "첨부 파일").getByText("ai-e2e-source.docx")).toBeVisible({ timeout: 120_000 });
 
     const fileRow = page.getByRole("row").filter({ hasText: "ai-e2e-source.docx" });
     await fileRow.getByRole("button", { name: "정보 추출" }).click();

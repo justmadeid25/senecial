@@ -21,7 +21,19 @@ export function SectionScope({ scope }: { scope: AnalyticsScopeMetadata }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Badge variant="outline">{badgeLabel}</Badge>
+      {/* §Phase 12.4 §9 - REAL bug found here: Badge (src/components/ui/badge.tsx)
+          bakes in whitespace-nowrap + shrink-0 unconditionally, correct for
+          its normal short-label use everywhere else, but badgeLabel here can
+          be a genuinely long sentence (e.g. "고정된 최근 기간 (필터로 개월 수
+          변경 불가)") - nowrap+shrink-0 forced this ONE badge wider than a
+          390px viewport regardless of the flex-wrap on its own container,
+          which only wraps ITEMS, not text inside an item that refuses to
+          shrink. Overridden here only, not in the shared component, since
+          every other Badge usage in the app IS a short, intentionally
+          unwrapped label. */}
+      <Badge variant="outline" className="h-auto min-w-0 shrink whitespace-normal text-left">
+        {badgeLabel}
+      </Badge>
       {scope.ignoredFilters.length > 0 && (
         <span className="text-xs text-muted-foreground">
           이 지표에는 적용되지 않음:{" "}

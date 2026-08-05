@@ -87,6 +87,13 @@ let reviewUrl = "";
 let invitationUrl = "";
 
 test.describe.serial("contract extraction: upload -> worker -> review -> apply", () => {
+  // §Phase 12.4 §10/§11 - see the first upload's own assertion below and
+  // scripts/run-e2e-prod.ts's warm-up comment: measured cold-server
+  // latency up to 60s even on an otherwise-idle host. Project default
+  // (90_000) leaves too little room once that assertion's budget is
+  // raised to 120_000.
+  test.setTimeout(150_000);
+
   test.beforeAll(async () => {
     goodDocxBuffer = await buildContractDocxBuffer([
       `계약명: ${suggestedTitle}`,
@@ -136,7 +143,12 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
     await page.getByRole("button", { name: "업로드" }).click();
     // Scoped to the "첨부 파일" card - the same filename also appears in
     // the separate "AI 및 문서 추출" table.
-    await expect(cardByHeading(page, "첨부 파일").getByText("extraction-source.docx")).toBeVisible({ timeout: 30_000 });
+    // §Phase 12.4 §10/§11 - real measured cold-server latency (33.7s/23.6s
+    // across repeated isolated runs of this exact step, immediately after
+    // server startup, up to 60s on other files' equivalent step) - see
+    // scripts/run-e2e-prod.ts's warm-up comment for the
+    // pg_stat_activity/server-log evidence ruling out a stuck query.
+    await expect(cardByHeading(page, "첨부 파일").getByText("extraction-source.docx")).toBeVisible({ timeout: 120_000 });
 
     const fileRow = page.getByRole("row").filter({ hasText: "extraction-source.docx" });
     await fileRow.getByRole("button", { name: "정보 추출" }).click();

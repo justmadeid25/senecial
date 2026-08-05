@@ -40,9 +40,22 @@ describe.skipIf(!hasRedisConfig)("Redis AI infrastructure against real Redis (Ph
   });
 
   describe("RedisConcurrencyLimiter (§15)", () => {
-    const config = resolveRedisConfig({ ...process.env, REDIS_URL: testRedisUrl, REDIS_KEY_PREFIX: keyPrefix });
-    const client = getAiConcurrencyRedisClient(config);
-    const limiter = new RedisConcurrencyLimiter(client);
+    // §Phase 12.4 §2 - built in beforeAll, not at describe-body top level: a
+    // skipped suite's describe callback still runs synchronously during
+    // collection, so eagerly calling resolveRedisConfig() here would throw
+    // ("REDIS_URL이 설정되지 않았습니다.") even when this whole suite is meant
+    // to be skipped because TEST_REDIS_URL is unset - exactly the gotcha
+    // tests/integration/redis-rate-limit-real.test.ts's own beforeAll
+    // comment documents (this file previously violated its own claimed
+    // convention, breaking a bare `pnpm test` run with no Redis configured).
+    let client: ReturnType<typeof getAiConcurrencyRedisClient>;
+    let limiter: RedisConcurrencyLimiter;
+
+    beforeAll(() => {
+      const config = resolveRedisConfig({ ...process.env, REDIS_URL: testRedisUrl, REDIS_KEY_PREFIX: keyPrefix });
+      client = getAiConcurrencyRedisClient(config);
+      limiter = new RedisConcurrencyLimiter(client);
+    });
 
     afterEach(async () => {
       const keys = await rawClient.keys(`${keyPrefix}:ai-concurrency:*`);
@@ -255,9 +268,16 @@ return {1, current}`,
   });
 
   describe("RedisCacheProvider (§14)", () => {
-    const config = resolveRedisConfig({ ...process.env, REDIS_URL: testRedisUrl, REDIS_KEY_PREFIX: `${keyPrefix}-cache` });
-    const client = getAiCacheRedisClient(config);
-    const provider = new RedisCacheProvider(client);
+    // §Phase 12.4 §2 - same beforeAll-deferral reason as the
+    // RedisConcurrencyLimiter describe above.
+    let client: ReturnType<typeof getAiCacheRedisClient>;
+    let provider: RedisCacheProvider;
+
+    beforeAll(() => {
+      const config = resolveRedisConfig({ ...process.env, REDIS_URL: testRedisUrl, REDIS_KEY_PREFIX: `${keyPrefix}-cache` });
+      client = getAiCacheRedisClient(config);
+      provider = new RedisCacheProvider(client);
+    });
 
     it("get/set round-trips a real value through real Redis", async () => {
       const key = `k-${randomUUID()}`;

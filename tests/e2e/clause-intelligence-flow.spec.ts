@@ -97,6 +97,13 @@ let clausesUrl = "";
 let standardUrl = "";
 
 test.describe.serial("clause structuring, search, comparison, and review signals", () => {
+  // §Phase 12.4 §10/§11 - see the upload-visibility assertion below and
+  // scripts/run-e2e-prod.ts's warm-up comment: this file's first upload
+  // (right after server startup, in QUEUE_SPECS order) measured up to 60s
+  // even on an otherwise-idle host. Project default (90_000) leaves too
+  // little room once that assertion's own budget is raised to 120_000.
+  test.setTimeout(150_000);
+
   test.beforeAll(async () => {
     docxBuffer = await buildContractDocxBuffer([
       "본 문서는 조항 구조화 테스트를 위한 계약서입니다.",
@@ -140,7 +147,14 @@ test.describe.serial("clause structuring, search, comparison, and review signals
     await page.getByRole("button", { name: "업로드" }).click();
     // Scoped to the "첨부 파일" card - the same filename also appears in
     // the separate "AI 및 문서 추출" table.
-    await expect(cardByHeading(page, "첨부 파일").getByText("clause-source.docx")).toBeVisible({ timeout: 30_000 });
+    // §Phase 12.4 §10/§11 - real measured cold-server latency, up to 60s
+    // even on an otherwise-idle host (other apps closed, ~1% CPU) - not a
+    // hung request. See scripts/run-e2e-prod.ts's warm-up comment for the
+    // pg_stat_activity/server-log evidence ruling out a stuck query or
+    // code bug; the GET-only warm-up there doesn't touch this step's real
+    // bottleneck (the write path: storage put()/Prisma insert/Redis
+    // rate-limit check), so this stays a generous, measured budget.
+    await expect(cardByHeading(page, "첨부 파일").getByText("clause-source.docx")).toBeVisible({ timeout: 120_000 });
 
     const fileRow = page.getByRole("row").filter({ hasText: "clause-source.docx" });
     await fileRow.getByRole("button", { name: "정보 추출" }).click();
