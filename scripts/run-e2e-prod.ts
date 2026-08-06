@@ -440,9 +440,30 @@ async function main(): Promise<void> {
   const finalExitCode = playwrightExitCode !== 0 ? playwrightExitCode : cleanupExitCode;
   console.log(`[e2e-prod] done. Playwright exit code: ${playwrightExitCode}, cleanup exit code: ${cleanupExitCode}`);
   process.exitCode = finalExitCode;
+
+  // §Phase 12.5 - REAL bug found here on GitHub Actions: setting
+  // `process.exitCode` alone lets Node wait for the event loop to drain
+  // naturally, but `child.stdout?.on("data", captureOutput)` above keeps
+  // this process's stdout/stderr pipe open for as long as ANY process
+  // still holds the write end - including an orphaned grandchild that
+  // `shell: true` left behind (see stopServer()'s own comment) even after
+  // killAnyProcessOnPort() reaped whatever was actually LISTENING on
+  // PORT. On this host (Windows) that pipe is inherited differently and
+  // this was never observed; on GitHub Actions' Linux runners it measurably
+  // hung this exact script for 30+ minutes past its own "done" log line,
+  // with the underlying work (build + all 101 tests + cleanup) already
+  // finished in ~10 minutes matching local timing - explaining why every
+  // prior CI run of e2e-production-like/release:verify timed out at
+  // GitHub's ~6-hour job ceiling instead of finishing. An explicit
+  // `process.exit()` forces this process to terminate immediately
+  // regardless of any lingering open handle, which is what actually ends
+  // the CI step - `killAnyProcessOnPort()` above still matters
+  // independently (it prevents a real zombie server process from wasting
+  // runner resources or holding the port for a subsequent invocation).
+  process.exit(finalExitCode);
 }
 
 main().catch((error: unknown) => {
   console.error("[e2e-prod] fatal:", error instanceof Error ? error.message : error);
-  process.exitCode = 1;
+  process.exit(1);
 });

@@ -153,7 +153,15 @@ jobs:
         run: |
           DIFF=$(pnpm exec prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --script)
           echo "$DIFF"
-          UNEXPECTED=$(echo "$DIFF" | grep -v -E '^(-- DropIndex|DROP INDEX "clause_embeddings_vector_native_hnsw_idx";|-- This is an empty migration\.|)$')
+          # §Phase 12.5 - REAL bug found here: this `run:` block uses `bash
+          # -e` (GitHub Actions' default), and `grep -v` exits 1 when it
+          # filters out EVERY line (the expected, healthy case - nothing
+          # left to flag) - under `set -e` that aborted this whole script
+          # immediately, before the `if` check below ever ran, failing this
+          # step even when the diff was exactly the one known/allowed
+          # exception. `|| true` neutralizes grep's own exit code; the `if`
+          # below is the only thing that should decide pass/fail here.
+          UNEXPECTED=$(echo "$DIFF" | grep -v -E '^(-- DropIndex|DROP INDEX "clause_embeddings_vector_native_hnsw_idx";|-- This is an empty migration\.|)$' || true)
           if [ -n "$UNEXPECTED" ]; then
             echo "::error::Unexpected schema/migration drift beyond the known pgvector HNSW index gap:"
             echo "$UNEXPECTED"
