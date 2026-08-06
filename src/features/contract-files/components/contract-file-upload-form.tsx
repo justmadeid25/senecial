@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +18,16 @@ import { uploadContractFileAction } from "@/features/contract-files/server/uploa
  * /contracts/[id]/page.tsx) rather than read from process.env here - this
  * is a client component, and non-NEXT_PUBLIC_ env vars are not available
  * in client bundles.
+ *
+ * No client-side router.refresh() here - the action's own revalidatePath()
+ * already refreshes this route as part of its response. Calling
+ * router.refresh() again on top of that hits a confirmed React/Next.js 16
+ * bug (vercel/next.js#86055, fixed upstream by react/react#36134 in Next
+ * 16.3.0): the follow-up RSC fetch gets aborted and useTransition's
+ * isPending never clears, silently, with no console error - measured
+ * locally as a deterministic ~120s hang on this exact page. Since we're on
+ * 16.2.12, the workaround is to not issue the redundant, bug-triggering
+ * refresh at all.
  */
 export function ContractFileUploadForm({
   contractId,
@@ -27,7 +36,6 @@ export function ContractFileUploadForm({
   contractId: string;
   maxUploadSizeMb: number;
 }) {
-  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +75,6 @@ export function ContractFileUploadForm({
       if (inputRef.current) {
         inputRef.current.value = "";
       }
-      router.refresh();
     });
   }
 

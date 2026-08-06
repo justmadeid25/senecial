@@ -394,6 +394,19 @@ async function main(): Promise<void> {
         // same directory the server just wrote to, not two independent
         // process.cwd()-based computations that happen to coincide.
         TEST_MAILBOX_DIR: serverEnv.TEST_MAILBOX_DIR,
+        // Same class of bug as TEST_MAILBOX_DIR above, found via the real
+        // worker-CLI run this now unblocks: runExtractionWorker() (and any
+        // other test helper that shells out to a CLI script via
+        // `dotenv -e .env.e2e`) only sees .env.e2e's static
+        // LOCAL_STORAGE_PATH=./storage default, not the run-specific
+        // tmp/e2e-storage/prod-{runId} directory the spawned server
+        // actually writes uploads to - so the worker CLI looked in the
+        // wrong directory and reported every file "파일을 찾을 수 없습니다."
+        // even though the upload itself succeeded. Threading the server's
+        // own value through here (inherited by execFileSync's default
+        // env passthrough in the spec files) makes every process agree on
+        // one real directory.
+        LOCAL_STORAGE_PATH: serverEnv.LOCAL_STORAGE_PATH,
         ...(jsonOutput ? { PLAYWRIGHT_JSON_OUTPUT_NAME: jsonOutput } : {}),
       },
     });

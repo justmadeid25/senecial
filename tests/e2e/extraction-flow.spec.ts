@@ -212,7 +212,11 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
       .filter({ hasText: "계약번호" })
       .first();
     await contractNumberSection.getByRole("button", { name: "승인", exact: true }).click();
-    await expect(page.getByText("검토 결과를 저장했습니다.")).toBeVisible();
+    // .last() - toast notifications from prior actions in this same test
+    // can still be visible (pre-dismiss animation) when the next one fires,
+    // so the plain text locator can match more than one under strict mode;
+    // we only care that THIS action's own toast appeared.
+    await expect(page.getByText("검토 결과를 저장했습니다.").last()).toBeVisible();
 
     // 계약명 - edit then accept.
     const titleSection = page.locator("div.rounded-lg.border").filter({ hasText: "계약명" }).first();
@@ -220,7 +224,11 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
     const titleInput = titleSection.locator("input[type=text]").first();
     await titleInput.fill(`${suggestedTitle} - 검토 반영`);
     await titleSection.getByRole("button", { name: "수정값 저장" }).click();
-    await expect(page.getByText("검토 결과를 저장했습니다.")).toBeVisible();
+    // .last() - toast notifications from prior actions in this same test
+    // can still be visible (pre-dismiss animation) when the next one fires,
+    // so the plain text locator can match more than one under strict mode;
+    // we only care that THIS action's own toast appeared.
+    await expect(page.getByText("검토 결과를 저장했습니다.").last()).toBeVisible();
 
     // 자동갱신 - reject.
     const autoRenewalSection = page
@@ -228,7 +236,11 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
       .filter({ hasText: "자동갱신" })
       .first();
     await autoRenewalSection.getByRole("button", { name: "거절", exact: true }).click();
-    await expect(page.getByText("검토 결과를 저장했습니다.")).toBeVisible();
+    // .last() - toast notifications from prior actions in this same test
+    // can still be visible (pre-dismiss animation) when the next one fires,
+    // so the plain text locator can match more than one under strict mode;
+    // we only care that THIS action's own toast appeared.
+    await expect(page.getByText("검토 결과를 저장했습니다.").last()).toBeVisible();
   });
 
   test("owner picks an existing counterparty for the counterpartyName suggestion", async ({
@@ -249,7 +261,11 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
     await counterpartySection.getByLabel("상대방 선택").click();
     await page.getByRole("option", { name: counterpartyName }).click();
     await counterpartySection.getByRole("button", { name: "수정값 저장" }).click();
-    await expect(page.getByText("검토 결과를 저장했습니다.")).toBeVisible();
+    // .last() - toast notifications from prior actions in this same test
+    // can still be visible (pre-dismiss animation) when the next one fires,
+    // so the plain text locator can match more than one under strict mode;
+    // we only care that THIS action's own toast appeared.
+    await expect(page.getByText("검토 결과를 저장했습니다.").last()).toBeVisible();
   });
 
   test("applying reflects only approved suggestions and leaves the rejected field unchanged", async ({
@@ -321,7 +337,11 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
       .filter({ hasText: "계약번호" })
       .first();
     await memberContractNumberSection.getByRole("button", { name: "승인", exact: true }).click();
-    await expect(page.getByText("검토 결과를 저장했습니다.")).toBeVisible();
+    // .last() - toast notifications from prior actions in this same test
+    // can still be visible (pre-dismiss animation) when the next one fires,
+    // so the plain text locator can match more than one under strict mode;
+    // we only care that THIS action's own toast appeared.
+    await expect(page.getByText("검토 결과를 저장했습니다.").last()).toBeVisible();
   });
 
   test("a second organization cannot view this organization's review page (404)", async ({
