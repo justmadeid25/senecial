@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { AiBudgetExceededError } from "@/domain/ai/ai-budget-error";
 import type { Citation } from "@/domain/ai/citation";
+import { AiDisabledError, ExternalAiProcessingDisabledError } from "@/domain/ai/external-ai-policy";
 import { resolveRequestId } from "@/domain/logging/request-id";
 import { askQuestionStreaming } from "@/features/ai/server/ask-question";
 import { NotFoundError, ValidationError } from "@/lib/errors";
@@ -114,6 +116,9 @@ export async function POST(request: Request) {
             for await (const event of askQuestionStreaming({
               organizationId: authContext.organizationId,
               question,
+              requestId,
+              userId: authContext.userId,
+              conversationId: conversation.id,
             })) {
               if (clientDisconnected || request.signal.aborted) {
                 break;
@@ -156,14 +161,22 @@ export async function POST(request: Request) {
                 }
               }
             }
-          } catch {
+          } catch (error) {
             // §Citation Required - a paragraph without a valid citation
             // marker makes assertEveryParagraphHasCitation() throw inside
             // askQuestionStreaming(); the correct response is to refuse
             // the output entirely (never flush a partially-built,
             // uncited answer) and never persist an ASSISTANT message for
             // it - the user's own question message above is untouched.
-            enqueueEvent({ type: "error", message: "답변을 생성하지 못했습니다. 다시 시도해 주세요." });
+            // §Phase 13 Part H (§40) - budget/policy rejections get their
+            // OWN safe, specific message (never provider internals); every
+            // other failure (citation, provider error) stays the generic
+            // message so nothing provider-shaped ever reaches the client.
+            const message =
+              error instanceof AiBudgetExceededError || error instanceof AiDisabledError || error instanceof ExternalAiProcessingDisabledError
+                ? error.message
+                : "답변을 생성하지 못했습니다. 다시 시도해 주세요.";
+            enqueueEvent({ type: "error", message });
           } finally {
             await releaseAiConcurrencySlots(concurrencySlots);
             controller.close();

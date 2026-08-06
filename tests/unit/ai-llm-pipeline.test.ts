@@ -78,16 +78,22 @@ describe("DeterministicDevelopmentLlmProvider (Phase 12 Part D/F - real, not a p
     expect(() => assertEveryParagraphHasCitation(result.text, [])).toThrow(/citation 없이는/);
   });
 
-  it("streamCompletion yields multiple real chunks (not one single chunk) that concatenate to the exact same text generateCompletion returns", async () => {
+  it("stream yields multiple real text-delta events (not one single chunk) that concatenate to the exact same text generateCompletion returns, followed by usage and done", async () => {
     const messages = buildPromptMessages("계약 해지 방법", CITATIONS);
     const { text: fullText } = await provider.generateCompletion(messages);
 
     const chunks: string[] = [];
-    for await (const chunk of provider.streamCompletion(messages)) {
-      chunks.push(chunk);
+    const events: string[] = [];
+    for await (const event of provider.stream(messages)) {
+      events.push(event.type);
+      if (event.type === "text-delta") {
+        chunks.push(event.text);
+      }
     }
 
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.join("")).toBe(fullText);
+    expect(events.at(-2)).toBe("usage");
+    expect(events.at(-1)).toBe("done");
   });
 });

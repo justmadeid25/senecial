@@ -1,6 +1,7 @@
 import { loadEmailConfig, validateEmailConfig } from "@/lib/config/email";
 import { loadRedisConfig } from "@/lib/config/redis";
 import { loadS3Config, validateS3Config } from "@/lib/config/s3";
+import { AiProviderConfigError, assertSafeProviderBaseUrl } from "@/domain/ai/provider-config-validation";
 
 export interface ReadinessCheck {
   name: string;
@@ -196,6 +197,92 @@ export function validateProductionEnvironment(env: NodeJS.ProcessEnv): Readiness
   checks.push(checkCookieSessionConsistency(env));
   if ((env.RATE_LIMITER ?? "memory") === "redis") {
     checks.push(checkRedisTls(env));
+  }
+
+  checks.push(...validateAiProviderReadinessChecks(env));
+
+  return checks;
+}
+
+/**
+ * §Phase 13 Part B (§5) - real (non-development) AI provider config
+ * checks, run in ADDITION to the generic devDriverGuardCheck() above
+ * (which only confirms the driver name isn't "development" - it cannot
+ * know whether the real driver's OWN required env vars are actually
+ * present/valid). Never includes an API key VALUE in any check's detail.
+ */
+function validateAiProviderReadinessChecks(env: NodeJS.ProcessEnv): ReadinessCheck[] {
+  const checks: ReadinessCheck[] = [];
+  const isProduction = env.NODE_ENV === "production";
+  const embeddingDriver = env.AI_EMBEDDING_PROVIDER ?? "development";
+  const llmDriver = env.AI_LLM_PROVIDER ?? "development";
+
+  if (embeddingDriver === "openai" || llmDriver === "openai" || llmDriver === "azure-openai") {
+    const baseUrlVar = llmDriver === "azure-openai" ? "AZURE_OPENAI_ENDPOINT" : "OPENAI_BASE_URL";
+    const baseUrl = env[baseUrlVar] ?? (baseUrlVar === "OPENAI_BASE_URL" ? "https://api.openai.com/v1" : undefined);
+    if (baseUrl) {
+      try {
+        assertSafeProviderBaseUrl(baseUrl, baseUrlVar, isProduction);
+        checks.push({ name: `${baseUrlVar}`, status: "pass", detail: "HTTPS(또는 개발 환경 http) 형식 유효" });
+      } catch (error) {
+        checks.push({ name: baseUrlVar, status: "fail", detail: error instanceof AiProviderConfigError ? error.message : "유효하지 않음" });
+      }
+    } else {
+      checks.push({ name: baseUrlVar, status: "fail", detail: "설정되지 않음" });
+    }
+  }
+
+  if (embeddingDriver === "openai") {
+    checks.push(
+      env.OPENAI_API_KEY
+        ? { name: "OPENAI_API_KEY (embedding)", status: "pass", detail: "설정됨" }
+        : { name: "OPENAI_API_KEY (embedding)", status: "fail", detail: "설정되지 않음" }
+    );
+    const dimensionRaw = env.AI_EMBEDDING_DIMENSION;
+    if (dimensionRaw && (!Number.isInteger(Number(dimensionRaw)) || Number(dimensionRaw) <= 0)) {
+      checks.push({ name: "AI_EMBEDDING_DIMENSION", status: "fail", detail: "양의 정수가 아님" });
+    } else {
+      checks.push({
+        name: "AI_EMBEDDING_DIMENSION",
+        status: "pass",
+        detail: `${dimensionRaw ?? "256 (기본값 - vectorNative 컬럼과 일치)"}`,
+      });
+    }
+  }
+
+  const llmApiKeyVar: Record<string, string> = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", gemini: "GEMINI_API_KEY" };
+  if (llmDriver in llmApiKeyVar) {
+    const varName = llmApiKeyVar[llmDriver]!;
+    checks.push(
+      env[varName]
+        ? { name: `${varName} (LLM)`, status: "pass", detail: "설정됨" }
+        : { name: `${varName} (LLM)`, status: "fail", detail: "설정되지 않음" }
+    );
+  }
+  if (llmDriver === "azure-openai") {
+    for (const varName of ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_DEPLOYMENT"]) {
+      checks.push(
+        env[varName] ? { name: varName, status: "pass", detail: "설정됨" } : { name: varName, status: "fail", detail: "설정되지 않음" }
+      );
+    }
+  }
+
+  if (env.AI_PROVIDER_FAILOVER_ENABLED === "true") {
+    const secondaryDriver = env.AI_SECONDARY_LLM_PROVIDER;
+    if (!secondaryDriver) {
+      checks.push({ name: "AI_SECONDARY_LLM_PROVIDER", status: "fail", detail: "AI_PROVIDER_FAILOVER_ENABLED=true이지만 설정되지 않음" });
+    } else if (secondaryDriver === llmDriver) {
+      checks.push({ name: "AI_SECONDARY_LLM_PROVIDER", status: "fail", detail: "AI_LLM_PROVIDER와 동일한 provider로 설정될 수 없음" });
+    } else {
+      checks.push({ name: "AI_SECONDARY_LLM_PROVIDER", status: "pass", detail: `secondary=${secondaryDriver}` });
+      if (secondaryDriver !== "development" && secondaryDriver !== "ollama") {
+        checks.push(
+          env.AI_SECONDARY_LLM_API_KEY
+            ? { name: "AI_SECONDARY_LLM_API_KEY", status: "pass", detail: "설정됨" }
+            : { name: "AI_SECONDARY_LLM_API_KEY", status: "fail", detail: "설정되지 않음" }
+        );
+      }
+    }
   }
 
   return checks;

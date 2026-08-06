@@ -1,4 +1,6 @@
 import { AI_CACHE_TTL_SECONDS } from "@/lib/config/ai-cache";
+import { AiBudgetExceededError } from "@/domain/ai/ai-budget-error";
+import { AI_USAGE_OPERATION_TYPES } from "@/domain/ai/ai-usage-operation";
 import { hashCacheInput } from "@/domain/ai/cache-key";
 import type { Citation } from "@/domain/ai/citation";
 import { assertEveryParagraphHasCitation, CITATION_VALIDATOR_VERSION } from "@/domain/ai/citation-required";
@@ -6,7 +8,9 @@ import { assertQuestionWithinBudget, truncateToContextBudget } from "@/domain/ai
 import { checkEvidenceSufficiency, UNKNOWN_ANSWER_TEXT } from "@/domain/ai/hallucination-guard";
 import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
 import type { LlmMessage, LlmProvider } from "@/domain/ai/llm-provider";
+import { estimateAiCostMinor } from "@/domain/ai/pricing";
 import { buildPromptMessages, PROMPT_TEMPLATE_VERSION } from "@/domain/ai/prompt-builder";
+import { normalizeProviderError } from "@/domain/ai/provider-error";
 import { getCacheProvider, getCacheStampedeLock } from "@/server/services/ai/cache/get-cache-provider";
 import { withDistributedLockOrCompute } from "@/server/services/ai/cache/distributed-lock";
 import { withInFlightDeduplication } from "@/server/services/ai/cache/in-flight-deduplication";
@@ -20,12 +24,47 @@ import {
   recordLatencyBudgetExceeded,
   recordLlmUsage,
 } from "@/server/monitoring/metrics";
+import { AI_LLM_DEFAULT_MAX_OUTPUT_TOKENS_ESTIMATE } from "@/lib/config/ai-budget";
+import { releaseAiBudget, reserveAiBudget, settleAiBudget } from "@/server/services/ai/budget/reserve-ai-budget";
+import { enforceOrganizationAiPolicy } from "@/server/services/ai/enforce-organization-ai-policy";
+import { getAiRuntimeConfiguration } from "@/server/services/ai/get-ai-runtime-configuration";
 import { getLlmProvider } from "@/server/services/ai/get-llm-provider";
+import { isFallbackLlmProvider } from "@/server/services/ai/providers/fallback-llm-provider";
+import { recordAiUsageBestEffort } from "@/server/services/ai/record-ai-usage-best-effort";
 
 import { recordAiSearchPatterns } from "./record-ai-search-pattern";
+import { maybeDispatchShadowEvaluation } from "./run-shadow-evaluation";
 import { retrieveContext } from "./retrieve-context";
 
 const DEVELOPMENT_PROVIDER_NAME = "development";
+
+/**
+ * §Phase 13 Part G (§27) - a conservative WORST-CASE cost estimate used
+ * only to size the pre-call budget reservation (never the number actually
+ * recorded in AiUsageRecord, which always uses the real reported/derived
+ * usage - see settleLlmBudgetAndUsage() below). Input tokens are estimated
+ * from the built prompt's own length (already known before the call);
+ * output tokens use a fixed worst-case ceiling since the real completion
+ * length isn't known until the call finishes.
+ */
+async function reserveLlmBudget(params: {
+  organizationId: string;
+  llm: LlmProvider;
+  effectiveProviderName: string;
+  messages: LlmMessage[];
+}) {
+  const estimatedInputTokens = Math.ceil(params.messages.map((m) => m.content).join("\n").length / 4);
+  const estimate = estimateAiCostMinor({
+    provider: params.effectiveProviderName,
+    model: params.llm.modelName,
+    inputTokens: estimatedInputTokens,
+    outputTokens: AI_LLM_DEFAULT_MAX_OUTPUT_TOKENS_ESTIMATE,
+  });
+  return reserveAiBudget({
+    organizationId: params.organizationId,
+    maxEstimatedCostMinor: estimate.estimatedCostMinor ?? BigInt(0),
+  });
+}
 
 /** §Phase 12.2 Part E (§30) - applies CONTEXT_MAX_CLAUSES to the hallucination guard's already-scored strongCitations, recording a metric (never the dropped content) when truncation actually happens. */
 function applyContextBudget(citations: Citation[]): Citation[] {
@@ -40,6 +79,12 @@ function checkLlmLatencyBudget(durationMs: number, llm: LlmProvider): void {
   if (exceedsLatencyBudget("llm", durationMs, llm.providerName === DEVELOPMENT_PROVIDER_NAME)) {
     recordLatencyBudgetExceeded("llm");
   }
+}
+
+/** §Phase 13 Part G (§22) - resolved fresh per call (never cached), matching route.ts's own provenance-stamping rationale: an AiUsageRecord must reflect whatever config actually served THIS request. */
+async function currentAiConfigIdentity(): Promise<{ aiConfigVersion: string; aiConfigChecksum: string }> {
+  const config = getAiRuntimeConfiguration();
+  return { aiConfigVersion: config.version, aiConfigChecksum: config.checksum };
 }
 
 /**
@@ -104,10 +149,19 @@ function buildPromptCacheKey(llm: LlmProvider, messages: readonly LlmMessage[]):
  * needs one final string per golden-dataset question, not a live stream)
  * and by anywhere else that just wants a complete answer.
  */
-export async function askQuestion(params: { organizationId: string; question: string }): Promise<AskQuestionResult> {
+export async function askQuestion(params: { organizationId: string; question: string; userId?: string }): Promise<AskQuestionResult> {
   assertQuestionWithinBudget(params.question);
   recordAiRequestStart();
   try {
+    const llm = getLlmProvider();
+    // §Phase 13 Part H (§30) - checked before any retrieval/provider work,
+    // using the LLM provider's identity (askQuestion() is only used by the
+    // evaluation CLI - see this function's own docstring - which does not
+    // need the per-request budget reservation askQuestionStreaming()
+    // applies for real interactive traffic, but still must never send data
+    // to a real provider for a policy-disabled organization).
+    await enforceOrganizationAiPolicy(params.organizationId, llm.providerName);
+
     const citations = await retrieveContext({ organizationId: params.organizationId, question: params.question });
     const guard = checkEvidenceSufficiency(citations);
 
@@ -125,7 +179,6 @@ export async function askQuestion(params: { organizationId: string; question: st
     });
 
     const messages = buildPromptMessages(params.question, contextCitations);
-    const llm = getLlmProvider();
     const cache = getCacheProvider();
     const cacheKey = buildPromptCacheKey(llm, messages);
 
@@ -139,15 +192,55 @@ export async function askQuestion(params: { organizationId: string; question: st
 
       const computeAnswer = async (): Promise<string> => {
         const llmStart = performance.now();
-        const result = await llm.generateCompletion(messages);
+        let result;
+        try {
+          result = await llm.generateCompletion(messages);
+        } catch (rawError) {
+          const error = normalizeProviderError({ error: rawError, providerName: llm.providerName });
+          await recordAiUsageBestEffort({
+            organizationId: params.organizationId,
+            userId: params.userId,
+            operationType: AI_USAGE_OPERATION_TYPES.LLM_ASK,
+            provider: llm.providerName,
+            model: llm.modelName,
+            latencyMs: Math.round(performance.now() - llmStart),
+            success: false,
+            errorCode: error.errorCode,
+            ...(await currentAiConfigIdentity()),
+          });
+          throw error;
+        }
         const llmDurationMs = performance.now() - llmStart;
         recordDependencyLatency("llm", llmDurationMs);
         checkLlmLatencyBudget(llmDurationMs, llm);
+        const servedProvider = result.servedByProviderName ?? llm.providerName;
+        const servedModel = result.servedByModelName ?? llm.modelName;
         recordLlmUsage({
           promptTokens: result.usage.promptTokens,
           completionTokens: result.usage.completionTokens,
-          provider: llm.providerName,
-          model: llm.modelName,
+          provider: servedProvider,
+          model: servedModel,
+        });
+        const cost = estimateAiCostMinor({
+          provider: servedProvider,
+          model: servedModel,
+          inputTokens: result.usage.promptTokens,
+          outputTokens: result.usage.completionTokens,
+        });
+        await recordAiUsageBestEffort({
+          organizationId: params.organizationId,
+          userId: params.userId,
+          operationType: AI_USAGE_OPERATION_TYPES.LLM_ASK,
+          provider: servedProvider,
+          model: servedModel,
+          inputTokens: result.usage.promptTokens,
+          outputTokens: result.usage.completionTokens,
+          estimatedCostMinor: cost.estimatedCostMinor,
+          currency: cost.currency,
+          latencyMs: Math.round(llmDurationMs),
+          success: true,
+          fallbackUsed: result.servedByProviderName !== undefined,
+          ...(await currentAiConfigIdentity()),
         });
         await cache.set(cacheKey, result.text, AI_CACHE_TTL_SECONDS.prompt);
         return result.text;
@@ -204,10 +297,22 @@ export type AskQuestionStreamEvent =
 export async function* askQuestionStreaming(params: {
   organizationId: string;
   question: string;
+  requestId?: string;
+  userId?: string;
+  conversationId?: string;
 }): AsyncGenerator<AskQuestionStreamEvent> {
   assertQuestionWithinBudget(params.question);
   recordAiRequestStart();
   try {
+    const llm = getLlmProvider();
+    // §Phase 13 Part H (§30) - checked before ANY provider work (including
+    // the retrieval leg's own embedding call) using the LLM provider's
+    // identity; a real embedding-provider-specific check also runs inside
+    // retrieveContext()/hybridSearchClauses() via getEmbeddingProvider(),
+    // so an organization with the embedding leg allowed but the LLM leg
+    // disallowed is still caught here before any completion is requested.
+    await enforceOrganizationAiPolicy(params.organizationId, llm.providerName);
+
     const citations = await retrieveContext({ organizationId: params.organizationId, question: params.question });
     const guard = checkEvidenceSufficiency(citations);
 
@@ -230,7 +335,6 @@ export async function* askQuestionStreaming(params: {
     yield { type: "citations", citations: contextCitations };
 
     const messages = buildPromptMessages(params.question, contextCitations);
-    const llm = getLlmProvider();
     const cache = getCacheProvider();
     const cacheKey = buildPromptCacheKey(llm, messages);
 
@@ -256,53 +360,137 @@ export async function* askQuestionStreaming(params: {
     }
 
     recordCacheEvent("prompt", false);
+
+    // §Phase 13 Part G (§27) - the peeked identity (see
+    // FallbackLlmProvider.peekEffectiveIdentity()'s own docstring for the
+    // "sustained outage, not perfectly race-free" caveat) sizes the
+    // worst-case cost reservation against whichever provider will likely
+    // actually serve this request.
+    const effectiveIdentity = isFallbackLlmProvider(llm)
+      ? await llm.peekEffectiveIdentity()
+      : { providerName: llm.providerName, modelName: llm.modelName };
+    const budgetOutcome = await reserveLlmBudget({
+      organizationId: params.organizationId,
+      llm,
+      effectiveProviderName: effectiveIdentity.providerName,
+      messages,
+    });
+    if (!budgetOutcome.allowed) {
+      throw new AiBudgetExceededError();
+    }
+    const reservation = budgetOutcome.reservation;
+
     activeStreamingKeys.add(cacheKey);
 
     let paragraphBuffer = "";
     let fullText = "";
     const llmStart = performance.now();
+    let reportedUsage: { inputTokens: number; outputTokens: number } | undefined;
+    let servedByProviderName: string | undefined;
+    let servedByModelName: string | undefined;
 
     try {
-      for await (const delta of llm.streamCompletion(messages)) {
-        paragraphBuffer += delta;
-        fullText += delta;
+      try {
+        for await (const event of llm.stream(messages, { requestId: params.requestId })) {
+          if (event.type === "text-delta") {
+            paragraphBuffer += event.text;
+            fullText += event.text;
 
-        let boundary = paragraphBuffer.indexOf("\n\n");
-        while (boundary !== -1) {
-          const paragraph = paragraphBuffer.slice(0, boundary).trim();
-          paragraphBuffer = paragraphBuffer.slice(boundary + 2);
-          if (paragraph.length > 0) {
-            assertEveryParagraphHasCitation(paragraph, contextCitations);
-            yield { type: "chunk", text: `${paragraph}\n\n` };
+            let boundary = paragraphBuffer.indexOf("\n\n");
+            while (boundary !== -1) {
+              const paragraph = paragraphBuffer.slice(0, boundary).trim();
+              paragraphBuffer = paragraphBuffer.slice(boundary + 2);
+              if (paragraph.length > 0) {
+                assertEveryParagraphHasCitation(paragraph, contextCitations);
+                yield { type: "chunk", text: `${paragraph}\n\n` };
+              }
+              boundary = paragraphBuffer.indexOf("\n\n");
+            }
+          } else if (event.type === "usage") {
+            reportedUsage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens };
+          } else if (event.type === "done") {
+            servedByProviderName = event.servedByProviderName;
+            servedByModelName = event.servedByModelName;
           }
-          boundary = paragraphBuffer.indexOf("\n\n");
         }
-      }
 
-      const trailing = paragraphBuffer.trim();
-      if (trailing.length > 0) {
-        assertEveryParagraphHasCitation(trailing, contextCitations);
-        yield { type: "chunk", text: trailing };
+        const trailing = paragraphBuffer.trim();
+        if (trailing.length > 0) {
+          assertEveryParagraphHasCitation(trailing, contextCitations);
+          yield { type: "chunk", text: trailing };
+        }
+      } finally {
+        activeStreamingKeys.delete(cacheKey);
       }
-    } finally {
-      activeStreamingKeys.delete(cacheKey);
+    } catch (rawError) {
+      const error = normalizeProviderError({ error: rawError, providerName: llm.providerName });
+      await releaseAiBudget(reservation);
+      await recordAiUsageBestEffort({
+        organizationId: params.organizationId,
+        userId: params.userId,
+        conversationId: params.conversationId,
+        operationType: AI_USAGE_OPERATION_TYPES.LLM_ASK_STREAM,
+        provider: llm.providerName,
+        model: llm.modelName,
+        latencyMs: Math.round(performance.now() - llmStart),
+        success: false,
+        errorCode: error.errorCode,
+        ...(await currentAiConfigIdentity()),
+      });
+      throw rawError;
     }
 
     const llmDurationMs = performance.now() - llmStart;
     recordDependencyLatency("llm", llmDurationMs);
     checkLlmLatencyBudget(llmDurationMs, llm);
-    // Streaming providers don't return a usage object the way
-    // generateCompletion() does - approximate from the assembled text so
-    // Part L's token/cost metrics still accumulate something meaningful for
-    // the streaming path too.
+    // §Phase 13 Part D - a real provider's `usage` stream event (when it
+    // sends one) replaces the previous chars/4 approximation; only a
+    // provider that genuinely never reports streaming usage (none of the
+    // real providers wired in this phase - see each provider's own
+    // stream() implementation) falls back to the approximation.
+    const usage = reportedUsage ?? {
+      inputTokens: Math.ceil(messages.map((m) => m.content).join("\n").length / 4),
+      outputTokens: Math.ceil(fullText.length / 4),
+    };
+    const servedProvider = servedByProviderName ?? llm.providerName;
+    const servedModel = servedByModelName ?? llm.modelName;
     recordLlmUsage({
-      promptTokens: Math.ceil(messages.map((m) => m.content).join("\n").length / 4),
-      completionTokens: Math.ceil(fullText.length / 4),
-      provider: llm.providerName,
-      model: llm.modelName,
+      promptTokens: usage.inputTokens,
+      completionTokens: usage.outputTokens,
+      provider: servedProvider,
+      model: servedModel,
+    });
+    const cost = estimateAiCostMinor({
+      provider: servedProvider,
+      model: servedModel,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
+    await settleAiBudget(reservation, cost.estimatedCostMinor);
+    await recordAiUsageBestEffort({
+      organizationId: params.organizationId,
+      userId: params.userId,
+      conversationId: params.conversationId,
+      operationType: AI_USAGE_OPERATION_TYPES.LLM_ASK_STREAM,
+      provider: servedProvider,
+      model: servedModel,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      estimatedCostMinor: cost.estimatedCostMinor,
+      currency: cost.currency,
+      latencyMs: Math.round(llmDurationMs),
+      success: true,
+      fallbackUsed: servedByProviderName !== undefined,
+      ...(await currentAiConfigIdentity()),
     });
 
     await cache.set(cacheKey, fullText, AI_CACHE_TTL_SECONDS.prompt);
+
+    // §Phase 13 Part F (§20) - fire-and-forget, never awaited: must not add
+    // latency to the response the user is actually waiting on. See
+    // maybeDispatchShadowEvaluation()'s own docstring for why every
+    // failure mode inside it is swallowed rather than propagated here.
+    maybeDispatchShadowEvaluation({ organizationId: params.organizationId, messages, contextCitations });
 
     yield { type: "done", fullText };
   } finally {

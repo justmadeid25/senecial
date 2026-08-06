@@ -38,6 +38,14 @@ export default async function SettingsLayout({
             감사 로그
           </Link>
         )}
+        {isOwner && (
+          <Link
+            href="/settings/ai-usage"
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            AI 사용량
+          </Link>
+        )}
         <Link
           href="/settings/clause-standards"
           className="text-sm text-muted-foreground hover:text-foreground"

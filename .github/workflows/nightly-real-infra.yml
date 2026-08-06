@@ -67,3 +67,135 @@ jobs:
         run: pnpm exec vitest run tests/integration/redis-rate-limit-real.test.ts
         env:
           TEST_REDIS_URL: ${{ secrets.TEST_REDIS_URL }}
+      - name: Real Redis AI infrastructure tests (cache/concurrency/lock, circuit breaker, budget counter)
+        run: >-
+          pnpm exec vitest run
+          tests/integration/redis-ai-infrastructure-real.test.ts
+          tests/integration/redis-ai-circuit-breaker-and-budget-real.test.ts
+        env:
+          TEST_REDIS_URL: ${{ secrets.TEST_REDIS_URL }}
+
+  # §Phase 13 Part M (§44) - real (non-development) AI provider tests.
+  # Separate job (not steps in real-infra-tests above) so it can be skipped
+  # entirely - not just individual steps - when no AI provider secret is
+  # configured, without affecting the unrelated Postmark/S3/Redis job.
+  ai-provider-contract-tests:
+    name: ai-provider-contract-tests
+    runs-on: ubuntu-latest
+    environment: real-infra-tests
+    env:
+      TEST_OPENAI_API_KEY: ${{ secrets.TEST_OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Real OpenAI embedding/LLM provider contract tests
+        if: ${{ env.TEST_OPENAI_API_KEY != '' }}
+        run: pnpm exec vitest run tests/integration/openai-provider-real.test.ts
+      - name: No TEST_OPENAI_API_KEY configured - skipping
+        if: ${{ env.TEST_OPENAI_API_KEY == '' }}
+        run: echo "TEST_OPENAI_API_KEY secret not set - real OpenAI provider contract tests skipped (not failed)."
+
+  # §Phase 13 Part M (§44/§45) - production quality gate + cost regression
+  # against the REAL configured provider (never development). Uses the
+  # SAME OPENAI_API_KEY var the app itself reads (get-embedding-provider.ts/
+  # get-llm-provider.ts) - a distinct secret from TEST_OPENAI_API_KEY above
+  # by convention (a "production-shaped" run vs. a disposable contract-test
+  # key), but operators may point both at the same underlying account.
+  ai-production-quality-gate:
+    name: ai-production-quality-gate
+    runs-on: ubuntu-latest
+    environment: real-infra-tests
+    needs: ai-provider-contract-tests
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_DB: senecial_test
+          POSTGRES_USER: senecial
+          POSTGRES_PASSWORD: development-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U senecial -d senecial_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_test?schema=public
+      AUTH_SECRET: nightly-only-secret-not-for-production-use-0000000
+      AI_EMBEDDING_PROVIDER: openai
+      AI_LLM_PROVIDER: openai
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm exec prisma migrate deploy
+      - name: Real-provider golden dataset evaluation + release gate
+        if: ${{ env.OPENAI_API_KEY != '' }}
+        run: pnpm ai:evaluate:provider --execute
+      - uses: actions/upload-artifact@v4
+        if: ${{ env.OPENAI_API_KEY != '' }}
+        with:
+          name: ai-evaluation-provider-report
+          path: reports/ai-evaluation-provider-report.*
+      - name: No OPENAI_API_KEY configured - skipping
+        if: ${{ env.OPENAI_API_KEY == '' }}
+        run: echo "OPENAI_API_KEY secret not set - production quality gate skipped (not failed)."
+
+  # §Phase 13 Part M (§45) - a genuinely separate gate from
+  # ai-production-quality-gate above (correctness/security vs. cost trend) -
+  # consumes that job's report as an artifact rather than re-running the
+  # (paid) evaluation itself.
+  ai-cost-regression:
+    name: ai-cost-regression
+    runs-on: ubuntu-latest
+    environment: real-infra-tests
+    needs: ai-production-quality-gate
+    if: ${{ needs.ai-production-quality-gate.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-evaluation-provider-report
+          path: reports
+        continue-on-error: true
+      - name: AI cost regression check against committed baseline
+        run: |
+          if [ -f reports/ai-evaluation-provider-report.json ]; then
+            pnpm ai:cost-regression
+          else
+            echo "ai-evaluation-provider-report.json이 없습니다 (production quality gate가 실제 실행되지 않았을 수 있음) - 건너뜁니다."
+          fi
+      # Deliberately does NOT auto-commit reports/ai-cost-baseline.json back
+      # to the repo - an unreviewed automated push from a scheduled job is
+      # a bigger risk than a stale baseline. An operator who wants to reset
+      # the baseline (e.g. after an intentional model upgrade) downloads
+      # this artifact and commits it manually.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-cost-baseline-updated
+          path: reports/ai-cost-baseline.json
+          if-no-files-found: ignore

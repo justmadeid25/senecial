@@ -253,6 +253,36 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /**
+   * §Phase 13 Part H (§30) - master AI on/off switch. Defaults to true
+   * (non-breaking for every existing organization already relying on
+   * AI features) - an OWNER can turn it off per-organization; when
+   * false, EVERY AI operation (embedding generation, LLM ask, similar
+   * clause, AI review) is refused before any provider call, regardless
+   * of provider/development status.
+   */
+  aiEnabled                 Boolean @default(true)
+  /**
+   * §Phase 13 Part H (§30) - distinct from aiEnabled: this gates
+   * whether contract-derived text may be sent to a REAL (non-development)
+   * external provider specifically. Defaults to true for the same
+   * non-breaking reason as aiEnabled - an organization that wants zero
+   * external data transfer must explicitly opt out, at which point
+   * external-ai-policy.ts refuses any non-development provider call
+   * (the development provider itself never leaves the process, so it is
+   * never gated by this flag).
+   */
+  allowExternalAiProcessing Boolean @default(true)
+  /**
+   * §Phase 13 Part G (§26) - USD micro-cents (1 = 1e-6 USD, matching AiUsageRecord.estimatedCostMinor's unit). Null = no budget cap.
+   */
+  monthlyAiBudgetMinor      BigInt?
+  /**
+   * §Phase 13 Part G (§26) - counts AiUsageRecord rows with requestCount, not raw provider calls (a retried call is still one logical request). Null = no cap.
+   */
+  monthlyAiRequestLimit     Int?
+  dailyAiRequestLimit       Int?
+
   memberships         Membership[]
   counterparties      Counterparty[]
   contracts           Contract[]
@@ -272,6 +302,7 @@ model Organization {
   conversations       Conversation[]
   messages            Message[]
   aiSearchPatterns    AiSearchPattern[]
+  aiUsageRecords      AiUsageRecord[]
 
   @@map("organizations")
 }
@@ -1321,4 +1352,60 @@ model AiSearchPattern {
   @@unique([organizationId, patternType, patternKey])
   @@index([organizationId, patternType, count])
   @@map("ai_search_patterns")
+}
+
+/**
+ * §Phase 13 Part G (§22) - one row per AI provider call (embedding
+ * generation, an LLM ask/completion), for cost/usage aggregation only.
+ * Deliberately NEVER stores question/answer/clause text, the provider
+ * request/response body, or an API key - only token counts, a derived
+ * cost estimate, and closed-vocabulary identifiers (provider/model/
+ * operationType/errorCode), matching this codebase's existing pattern for
+ * MessageCitation/EmbeddingJob (store the FACT of what happened, never
+ * the content). `conversationId`/`messageId` are plain string references
+ * WITHOUT a foreign key (like MessageCitation.contractClauseId) - a
+ * deleted conversation/message must never cascade-delete its own billing
+ * history.
+ */
+model AiUsageRecord {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  userId             String?
+  conversationId     String?
+  messageId          String?
+  /**
+   * Closed vocabulary - see domain/ai/ai-usage-operation.ts (e.g. "embedding", "llm_ask", "llm_ask_stream", "evaluation").
+   */
+  operationType      String
+  provider           String
+  model              String
+  inputTokens        Int?
+  outputTokens       Int?
+  embeddingTokens    Int?
+  /**
+   * Always 1 for a single logical AI operation - matches AiUsageRecord being a per-operation row, not a per-provider-attempt row (retries are already reflected in the provider/circuit-breaker metrics, not duplicated here).
+   */
+  requestCount       Int      @default(1)
+  /**
+   * USD micro-cents (1 = 1e-6 USD) - see domain/ai/pricing.ts. Null when cost could not be estimated (e.g. an unpriced model) - never silently 0.
+   */
+  estimatedCostMinor BigInt?
+  currency           String?
+  latencyMs          Int
+  success            Boolean
+  /**
+   * One of domain/ai/provider-error.ts's ProviderErrorCode values, or null on success.
+   */
+  errorCode          String?
+  fallbackUsed       Boolean  @default(false)
+  aiConfigVersion    String
+  aiConfigChecksum   String
+  createdAt          DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([provider, model, createdAt])
+  @@index([operationType, createdAt])
+  @@map("ai_usage_records")
 }

@@ -1,4 +1,4 @@
-import type { EmbeddingProvider, EmbeddingResult } from "@/domain/ai/embedding-provider";
+import type { EmbeddingCallOptions, EmbeddingProvider, EmbeddingResult } from "@/domain/ai/embedding-provider";
 import { computeHashingTrickEmbedding, HASHING_TRICK_DEFAULT_DIMENSION } from "@/domain/ai/hashing-trick-embedding";
 
 /**
@@ -19,7 +19,8 @@ export class DeterministicDevelopmentEmbeddingProvider implements EmbeddingProvi
   readonly modelName = "hashing-trick-v1";
   readonly dimension = HASHING_TRICK_DEFAULT_DIMENSION;
 
-  async generateEmbedding(text: string): Promise<EmbeddingResult> {
+  async generateEmbedding(text: string, _options?: EmbeddingCallOptions): Promise<EmbeddingResult> {
+    void _options;
     return {
       vector: computeHashingTrickEmbedding(text, this.dimension),
       dimension: this.dimension,

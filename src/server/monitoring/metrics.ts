@@ -90,6 +90,98 @@ let aiConcurrentRequests = 0;
 /** §Phase 12.2 Part F (§35 stampede) - single-flight lock acquisitions that had to wait for an in-flight leader instead of computing themselves. */
 let cacheStampedeJoinedTotal = 0;
 
+/**
+ * §Phase 13 Part J (§35) - per-provider/operation call outcome counters,
+ * recorded by executeWithResilience() (server/services/ai/providers) on
+ * every attempt (including retries - each attempt is its own real network
+ * call, so each is its own real data point). `providerName`/`operation`
+ * are both closed-vocabulary strings this app defines, never
+ * organizationId/userId - same cardinality discipline as
+ * llmUsageByProvider above.
+ */
+interface ProviderCallCounters {
+  requestsTotal: number;
+  errorsTotal: number;
+  latency: Summary;
+}
+const providerCallCounters = new Map<string, ProviderCallCounters>();
+const providerErrorsByCode = new Map<string, number>();
+let providerFallbackTotal = 0;
+/** providerName -> last-known circuit state, 0=CLOSED/1=HALF_OPEN/2=OPEN (Prometheus gauges are numeric). */
+const circuitStateByProvider = new Map<string, 0 | 1 | 2>();
+let budgetRejectionsTotal = 0;
+/** BigInt micro-unit (USD micro-cents, see domain/ai/pricing.ts) running total - never a float, to avoid silent precision loss across many small additions. */
+let estimatedCostMinorTotal = BigInt(0);
+
+function providerCallKey(providerName: string, operation: string): string {
+  return `${providerName}:${operation}`;
+}
+
+/** §Phase 13 Part J - called by executeWithResilience() for every provider attempt (success or failure). */
+export function recordProviderCall(params: {
+  providerName: string;
+  operation: "embedding" | "llm";
+  success: boolean;
+  latencyMs?: number;
+  errorCode?: string;
+}): void {
+  const key = providerCallKey(params.providerName, params.operation);
+  const counters = providerCallCounters.get(key) ?? { requestsTotal: 0, errorsTotal: 0, latency: newSummary() };
+  counters.requestsTotal += 1;
+  if (!params.success) {
+    counters.errorsTotal += 1;
+  }
+  if (params.latencyMs !== undefined) {
+    addSample(counters.latency, params.latencyMs);
+  }
+  providerCallCounters.set(key, counters);
+
+  if (params.errorCode) {
+    const errorKey = `${key}:${params.errorCode}`;
+    providerErrorsByCode.set(errorKey, (providerErrorsByCode.get(errorKey) ?? 0) + 1);
+  }
+}
+
+/** §Phase 13 Part F (§18) - a request that succeeded via the SECONDARY provider after the primary failed/circuit-opened. */
+export function recordProviderFallback(): void {
+  providerFallbackTotal += 1;
+}
+
+/** §Phase 13 Part E (§17) - gauge, set by callers that just resolved a circuit breaker's state (e.g. after beforeCall()/onFailure()). */
+export function recordCircuitState(providerName: string, state: "CLOSED" | "HALF_OPEN" | "OPEN"): void {
+  circuitStateByProvider.set(providerName, state === "CLOSED" ? 0 : state === "HALF_OPEN" ? 1 : 2);
+}
+
+/** §Phase 13 Part G (§27) - an AI request that was rejected because the organization's budget/quota reservation failed. */
+export function recordBudgetRejection(): void {
+  budgetRejectionsTotal += 1;
+}
+
+/** §Phase 13 Part G (§23/§24) - accumulates estimated cost in USD micro-cents (1 minor unit = 1e-6 USD) as a BigInt, never a float. */
+export function recordEstimatedCostMinor(costMinor: bigint): void {
+  estimatedCostMinorTotal += costMinor;
+}
+
+/** §Phase 13 Part F (§20) - shadow-mode comparison outcome counters. Never records the shadow answer text itself, only structured quality signals (see run-shadow-evaluation.ts). */
+let shadowEvaluationsTotal = 0;
+let shadowEvaluationCitationValidTotal = 0;
+let shadowEvaluationFailedTotal = 0;
+const shadowEvaluationLatency = newSummary();
+
+export function recordShadowEvaluation(params: { success: boolean; citationValid?: boolean; latencyMs?: number }): void {
+  shadowEvaluationsTotal += 1;
+  if (!params.success) {
+    shadowEvaluationFailedTotal += 1;
+    return;
+  }
+  if (params.citationValid) {
+    shadowEvaluationCitationValidTotal += 1;
+  }
+  if (params.latencyMs !== undefined) {
+    addSample(shadowEvaluationLatency, params.latencyMs);
+  }
+}
+
 function logIfSlow(operation: string, durationMs: number, extra?: Record<string, string | number>): void {
   if (durationMs > SLOW_THRESHOLD_MS) {
     getLogger().warn("monitoring.slow_operation", { operation, durationMs, ...extra });
@@ -367,6 +459,66 @@ export function renderPrometheusMetrics(): string {
   lines.push("# HELP senecial_ai_cache_stampede_joined_total Requests that joined an in-flight single-flight computation instead of recomputing.");
   lines.push("# TYPE senecial_ai_cache_stampede_joined_total counter");
   lines.push(`senecial_ai_cache_stampede_joined_total ${cacheStampedeJoinedTotal}`);
+
+  lines.push("# HELP senecial_ai_provider_requests_total AI provider call attempts (including retries), per provider/operation.");
+  lines.push("# TYPE senecial_ai_provider_requests_total counter");
+  lines.push("# HELP senecial_ai_provider_errors_total AI provider call attempts that failed, per provider/operation.");
+  lines.push("# TYPE senecial_ai_provider_errors_total counter");
+  for (const [key, counters] of providerCallCounters) {
+    const [providerName, operation] = key.split(":");
+    lines.push(`senecial_ai_provider_requests_total{provider="${providerName}",operation="${operation}"} ${counters.requestsTotal}`);
+    lines.push(`senecial_ai_provider_errors_total{provider="${providerName}",operation="${operation}"} ${counters.errorsTotal}`);
+  }
+  lines.push(
+    ...formatSummary(
+      "senecial_ai_provider_latency_ms",
+      "AI provider call latency in milliseconds, per provider/operation.",
+      "provider_operation",
+      [...providerCallCounters.entries()].map(([key, counters]): [string, Summary] => [key, counters.latency])
+    )
+  );
+
+  lines.push("# HELP senecial_ai_provider_errors_by_code_total AI provider errors broken out by normalized error code.");
+  lines.push("# TYPE senecial_ai_provider_errors_by_code_total counter");
+  for (const [key, count] of providerErrorsByCode) {
+    const [providerName, operation, errorCode] = key.split(":");
+    lines.push(
+      `senecial_ai_provider_errors_by_code_total{provider="${providerName}",operation="${operation}",error_code="${errorCode}"} ${count}`
+    );
+  }
+
+  lines.push("# HELP senecial_ai_provider_fallback_total Requests served by a secondary provider after the primary failed.");
+  lines.push("# TYPE senecial_ai_provider_fallback_total counter");
+  lines.push(`senecial_ai_provider_fallback_total ${providerFallbackTotal}`);
+
+  lines.push("# HELP senecial_ai_circuit_state Circuit breaker state per provider (0=CLOSED, 1=HALF_OPEN, 2=OPEN).");
+  lines.push("# TYPE senecial_ai_circuit_state gauge");
+  for (const [providerName, state] of circuitStateByProvider) {
+    lines.push(`senecial_ai_circuit_state{provider="${providerName}"} ${state}`);
+  }
+
+  lines.push("# HELP senecial_ai_budget_rejections_total AI requests rejected because the organization's budget/quota reservation failed.");
+  lines.push("# TYPE senecial_ai_budget_rejections_total counter");
+  lines.push(`senecial_ai_budget_rejections_total ${budgetRejectionsTotal}`);
+
+  lines.push("# HELP senecial_ai_estimated_cost_minor_total Estimated cumulative AI cost in USD micro-cents (1 = 1e-6 USD).");
+  lines.push("# TYPE senecial_ai_estimated_cost_minor_total counter");
+  lines.push(`senecial_ai_estimated_cost_minor_total ${estimatedCostMinorTotal.toString()}`);
+
+  lines.push("# HELP senecial_ai_shadow_evaluations_total Shadow-mode comparison calls attempted (sampled requests only).");
+  lines.push("# TYPE senecial_ai_shadow_evaluations_total counter");
+  lines.push(`senecial_ai_shadow_evaluations_total ${shadowEvaluationsTotal}`);
+  lines.push("# HELP senecial_ai_shadow_evaluation_citation_valid_total Shadow-mode answers whose citations passed the same validator production answers must.");
+  lines.push("# TYPE senecial_ai_shadow_evaluation_citation_valid_total counter");
+  lines.push(`senecial_ai_shadow_evaluation_citation_valid_total ${shadowEvaluationCitationValidTotal}`);
+  lines.push("# HELP senecial_ai_shadow_evaluation_failed_total Shadow-mode calls that failed outright (provider error).");
+  lines.push("# TYPE senecial_ai_shadow_evaluation_failed_total counter");
+  lines.push(`senecial_ai_shadow_evaluation_failed_total ${shadowEvaluationFailedTotal}`);
+  lines.push(
+    ...formatSummary("senecial_ai_shadow_evaluation_latency_ms", "Shadow-mode comparison call latency in milliseconds.", "unused", [
+      ["shadow", shadowEvaluationLatency],
+    ])
+  );
 
   return lines.join("\n") + "\n";
 }

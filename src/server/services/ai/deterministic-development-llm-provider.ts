@@ -1,4 +1,4 @@
-import type { LlmCompletionResult, LlmMessage, LlmProvider, LlmUsage } from "@/domain/ai/llm-provider";
+import type { AiStreamEvent, LlmCallOptions, LlmCompletionResult, LlmMessage, LlmProvider, LlmUsage } from "@/domain/ai/llm-provider";
 import { buildCitationMarker } from "@/domain/ai/citation-marker";
 
 const CITATION_BLOCK_PATTERN = /\[CITATION (\d+)\]\n조항: (.+)\n계약: (.+)\n근거: ([\s\S]+?)\n\[\/CITATION \1\]/g;
@@ -66,7 +66,8 @@ export class DeterministicDevelopmentLlmProvider implements LlmProvider {
       .join("\n\n");
   }
 
-  async generateCompletion(messages: LlmMessage[]): Promise<LlmCompletionResult> {
+  async generateCompletion(messages: LlmMessage[], _options?: LlmCallOptions): Promise<LlmCompletionResult> {
+    void _options;
     const text = this.buildAnswerText(messages);
     const promptTokens = estimateTokenCount(messages.map((m) => m.content).join("\n"));
     const completionTokens = estimateTokenCount(text);
@@ -74,7 +75,8 @@ export class DeterministicDevelopmentLlmProvider implements LlmProvider {
     return { text, usage };
   }
 
-  async *streamCompletion(messages: LlmMessage[]): AsyncIterable<string> {
+  async *stream(messages: LlmMessage[], _options?: LlmCallOptions): AsyncIterable<AiStreamEvent> {
+    void _options;
     const text = this.buildAnswerText(messages);
     // Real streaming - yields multiple chunks over several ticks of the
     // event loop (never one single chunk), so downstream streaming
@@ -83,8 +85,12 @@ export class DeterministicDevelopmentLlmProvider implements LlmProvider {
     // work because everything arrives in one piece.
     const CHUNK_SIZE = 24;
     for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-      yield text.slice(i, i + CHUNK_SIZE);
+      yield { type: "text-delta", text: text.slice(i, i + CHUNK_SIZE) };
       await new Promise((resolve) => setImmediate(resolve));
     }
+    const promptTokens = estimateTokenCount(messages.map((m) => m.content).join("\n"));
+    const completionTokens = estimateTokenCount(text);
+    yield { type: "usage", inputTokens: promptTokens, outputTokens: completionTokens };
+    yield { type: "done", finishReason: "stop" };
   }
 }
