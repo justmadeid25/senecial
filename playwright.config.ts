@@ -36,6 +36,20 @@ const baseURL = smokeBaseUrl ?? `http://localhost:${PORT}`;
 const e2eRunId = process.env.E2E_RUN_ID ?? `${Date.now()}-${process.pid}`;
 const e2eStoragePath = path.join("tmp", "e2e-storage", e2eRunId);
 
+// Same class of bug as scripts/run-e2e-prod.ts's TEST_MAILBOX_DIR/
+// LOCAL_STORAGE_PATH threading (see that file's own comments): this
+// e2eStoragePath value was previously only passed to the spawned
+// webServer's own env below, never to this top-level process. Spec-file
+// helpers that shell out to a worker CLI via execFileSync (e.g.
+// runExtractionWorker() in extraction-flow.spec.ts) inherit *this*
+// process's env, not the webServer child's - without this line they'd
+// fall back to .env.e2e's static LOCAL_STORAGE_PATH=./storage default
+// and look in the wrong directory for files the dev server actually
+// wrote to tmp/e2e-storage/{e2eRunId}. Setting it here, before Playwright
+// spawns any test workers, makes every process in the tree agree on the
+// one real directory.
+process.env.LOCAL_STORAGE_PATH = e2eStoragePath;
+
 /**
  * §Phase 12.2 Part B (§12 Worker policy) - three projects, not one:
  *
