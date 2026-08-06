@@ -5,12 +5,32 @@ allowBuilds:
   sharp: true
   unrs-resolver: true
 minimumReleaseAgeExclude:
-  - '@hono/node-server@2.0.5'
-  - find-my-way@9.6.1
+  - '@hono/node-server@2.1.0'
+  - find-my-way@9.7.0
   - valibot@1.4.2
   - brace-expansion@1.1.17 || 1.1.18 || 5.0.9
   - fast-uri@3.1.5
   - hono@4.12.34
+overrides:
+  # Remaining `pnpm audit` findings that a plain re-resolve can't reach:
+  # each vulnerable version is still within its direct parent's declared
+  # semver range (e.g. ajv's "^3.0.0" for fast-uri already allows 3.1.4),
+  # so pnpm never picks the patched version on its own. These force it.
+  # All are transitive build/lint/dev-tooling dependencies (prisma dev
+  # server, shadcn CLI, eslint chain), never part of the shipped runtime
+  # bundle.
+  '@hono/node-server': 2.1.0 # 2.0.5 (originally advertised as patched) was later itself flagged for a separate memory-leak DoS advisory; 2.1.0 is the current latest
+  find-my-way: 9.7.0 # 9.6.1 (pnpm audit's advertised minimum patched version) was never actually published; 9.7.0 is the real latest
+  valibot: 1.4.2
+  # Scoped to the 5.x line only (>=5.0.0 <5.0.9) - minimatch@10.2.5 (via
+  # ts-morph/typescript-eslint) already depends on brace-expansion 5.x, so
+  # this is a same-major patch bump. A separate, older minimatch@3.1.5
+  # chain (via eslint) depends on brace-expansion 1.x - already resolved
+  # to the patched 1.1.18 on its own and deliberately left alone here, since
+  # forcing it to 5.x would hand a package still on the 1.x API a version
+  # whose exports changed across that major bump.
+  'brace-expansion@>=5.0.0 <5.0.9': 5.0.9
+  fast-uri: 3.1.5
 onlyBuiltDependencies:
   - sharp
   - unrs-resolver
