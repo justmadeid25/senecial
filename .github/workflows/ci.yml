@@ -136,12 +136,30 @@ jobs:
       - name: prisma migrate deploy (empty database)
         run: pnpm exec prisma migrate deploy
       - name: Drift check - migrations vs schema.prisma
-        # --exit-code: 0 = no diff (migrations, replayed from scratch, match
-        # schema.prisma exactly), 2 = non-empty diff (drift - e.g. a
-        # hand-edited schema.prisma with no corresponding migration file),
-        # 1 = a real command error. `--from-config-datasource` diffs against
-        # the database this job just ran `prisma migrate deploy` on above.
-        run: pnpm exec prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --script --exit-code
+        # §Phase 12.5 - REAL bug found here on first actual CI run: bare
+        # `--exit-code` treats ANY diff as drift, but `vectorNative` is
+        # declared `Unsupported("vector(256)")` in schema.prisma (Prisma has
+        # no declarative syntax for a pgvector HNSW index on an Unsupported
+        # column) - `prisma migrate diff` therefore ALWAYS proposes dropping
+        # `clause_embeddings_vector_native_hnsw_idx` (created via raw SQL in
+        # 20260804090000_restore_pgvector_hnsw_index/migration.sql), even on
+        # a perfectly healthy database. This is a permanent, unavoidable gap
+        # given Prisma's current pgvector support, not real drift - every
+        # prior CI run on this repo failed here for exactly this reason.
+        # `db:verify-migrations` below is the authoritative check that this
+        # specific index/extension DOES exist; this step's job is only to
+        # catch any OTHER, genuinely unexpected difference (e.g. a
+        # hand-edited schema.prisma with no corresponding migration).
+        run: |
+          DIFF=$(pnpm exec prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --script)
+          echo "$DIFF"
+          UNEXPECTED=$(echo "$DIFF" | grep -v -E '^(-- DropIndex|DROP INDEX "clause_embeddings_vector_native_hnsw_idx";|-- This is an empty migration\.|)$')
+          if [ -n "$UNEXPECTED" ]; then
+            echo "::error::Unexpected schema/migration drift beyond the known pgvector HNSW index gap:"
+            echo "$UNEXPECTED"
+            exit 1
+          fi
+          echo "Only the expected, permanent pgvector HNSW index gap - no real drift."
       # §Phase 12.3 Part A (§4) - runs against the PRISTINE database this
       # job just built from scratch via `migrate deploy` above - the
       # strongest possible check that the full migration history (extension/
@@ -245,22 +263,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: senecial
-          MINIO_ROOT_PASSWORD: development-only-password
-        ports: ["9000:9000"]
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 5s
-          --health-timeout 10s
-          --health-retries 10
-        # MinIO's official image needs an explicit command; GitHub Actions
-        # service containers don't accept `command:`, so this workflow only
-        # verifies MinIO comes up healthy - FILE_STORAGE_DRIVER stays
-        # "local" for the E2E run below (S3-mode E2E is exercised via
-        # tests/integration/s3-storage-real.test.ts's opt-in path instead).
+    # §Phase 12.5 - REAL bug found on the first actual CI run: a `minio`
+    # service container previously lived here, but GitHub Actions service
+    # containers cannot specify `command:`, and MinIO's official image with
+    # no command just prints its help/usage text and exits immediately -
+    # it never reaches a healthy state. That isn't a soft/ignorable
+    # healthcheck failure: GitHub Actions aborts the ENTIRE job the moment
+    # any service container fails to start ("One or more containers failed
+    # to start"), so this job never ran a single step, including the actual
+    # Playwright tests, on any prior CI run. Removed rather than
+    # "fixed to be healthy" - it was never functionally used by this job in
+    # the first place (FILE_STORAGE_DRIVER stays "local" below; real S3-mode
+    # testing is tests/integration/s3-storage-real.test.ts's separate
+    # opt-in path in nightly-real-infra.yml, which talks to a real external
+    # S3-compatible endpoint, not a same-job MinIO container).
     env:
       DATABASE_URL: postgresql://senecial:development-only-password@localhost:5432/senecial_test?schema=public
       AUTH_SECRET: ci-only-secret-not-for-production-use-000000000000

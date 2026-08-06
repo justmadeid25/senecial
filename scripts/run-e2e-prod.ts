@@ -87,32 +87,80 @@ async function waitForReady(): Promise<ReadinessBody> {
 }
 
 /**
- * §7 - Windows-specific port-based cleanup safety net (see stopServer()'s
- * own comment for why this is necessary, not just defensive). Parses
- * `netstat -ano` for a LISTENING socket on `port` and force-kills whatever
- * PID owns it. A no-op (never throws) if nothing is listening - the
- * common, expected case when the graceful/PID-based kill already worked.
+ * §7 - cross-platform port-based cleanup safety net (see stopServer()'s own
+ * comment for why this is necessary, not just defensive). Force-kills
+ * whatever process is still LISTENING on `port` after the graceful/PID-based
+ * stop. A no-op (never throws) if nothing is listening - the common,
+ * expected case when the graceful stop already worked.
+ *
+ * §Phase 12.5 - REAL bug found here on the first actual GitHub Actions run:
+ * this was Windows-only (`netstat -ano` + `taskkill`) with no Linux/macOS
+ * equivalent, so on CI the orphaned standalone `node server.js` (see
+ * stopServer()'s own comment on why `shell: true` can leave one behind)
+ * was NEVER actually reaped. That orphan inherited this step's stdout/
+ * stderr pipe, which GitHub Actions keeps a job step "running" on until
+ * every process holding it exits - not just the main script process. The
+ * `run-e2e-prod.ts` script itself finished normally in ~10 minutes
+ * (confirmed via its own "[e2e-prod] done." log line), but the CI *step*
+ * then hung for hours behind that orphan until the platform's default
+ * 360-minute job timeout finally killed it - this is why every single
+ * prior CI run of this workflow, going back through this repo's full
+ * history, failed after ~6 hours instead of the ~10 minutes local runs
+ * take.
  */
 async function killAnyProcessOnPort(port: string): Promise<void> {
-  let output = "";
-  try {
-    output = execSync("netstat -ano", { encoding: "utf8" });
-  } catch {
+  if (process.platform === "win32") {
+    let output = "";
+    try {
+      output = execSync("netstat -ano", { encoding: "utf8" });
+    } catch {
+      return;
+    }
+    const pids = new Set<string>();
+    for (const line of output.split("\n")) {
+      if (!line.includes("LISTENING")) continue;
+      const match = line.match(new RegExp(`[:.]${port}\\s`));
+      if (!match) continue;
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[parts.length - 1];
+      if (pid && /^\d+$/.test(pid)) pids.add(pid);
+    }
+    for (const pid of pids) {
+      console.log(`[e2e-prod] port ${port} still held by PID ${pid} after graceful stop - force-killing.`);
+      try {
+        execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore" });
+      } catch {
+        // Already gone - fine.
+      }
+    }
     return;
   }
-  const pids = new Set<string>();
-  for (const line of output.split("\n")) {
-    if (!line.includes("LISTENING")) continue;
-    const match = line.match(new RegExp(`[:.]${port}\\s`));
-    if (!match) continue;
-    const parts = line.trim().split(/\s+/);
-    const pid = parts[parts.length - 1];
-    if (pid && /^\d+$/.test(pid)) pids.add(pid);
+
+  // Linux/macOS: `lsof -ti` prints just the PIDs of whatever is bound to
+  // this TCP port (LISTEN or otherwise) - the direct equivalent of the
+  // Windows branch above. `lsof` is preinstalled on GitHub-hosted Ubuntu
+  // and macOS runners; falls back to `fuser` (also commonly present on
+  // Linux) if `lsof` itself is missing, rather than silently doing nothing.
+  let pidsOutput = "";
+  try {
+    pidsOutput = execSync(`lsof -ti tcp:${port}`, { encoding: "utf8" });
+  } catch (error) {
+    // `lsof` exits non-zero (throwing here) when NOTHING matches - the
+    // common, expected case. Only fall back to `fuser` if `lsof` itself
+    // could not run at all (e.g. command not found), not merely "no match".
+    if ((error as { stdout?: string }).stdout !== undefined) return;
+    try {
+      execSync(`fuser -k ${port}/tcp`, { stdio: "ignore" });
+    } catch {
+      // Neither tool available or nothing to kill - fine, best-effort.
+    }
+    return;
   }
+  const pids = pidsOutput.split("\n").map((l) => l.trim()).filter((l) => /^\d+$/.test(l));
   for (const pid of pids) {
     console.log(`[e2e-prod] port ${port} still held by PID ${pid} after graceful stop - force-killing.`);
     try {
-      execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore" });
+      execSync(`kill -9 ${pid}`, { stdio: "ignore" });
     } catch {
       // Already gone - fine.
     }
