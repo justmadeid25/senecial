@@ -48,7 +48,19 @@ const e2eStoragePath = path.join("tmp", "e2e-storage", e2eRunId);
 // wrote to tmp/e2e-storage/{e2eRunId}. Setting it here, before Playwright
 // spawns any test workers, makes every process in the tree agree on the
 // one real directory.
-process.env.LOCAL_STORAGE_PATH = e2eStoragePath;
+//
+// Gated on `!smokeBaseUrl`, exactly like the webServer block below: when
+// SMOKE_BASE_URL is set, this config does not own the server -
+// scripts/run-e2e-prod.ts does, and it already threads its OWN correct
+// run-specific LOCAL_STORAGE_PATH into this very process's env before
+// invoking Playwright. An unconditional assignment here was a real
+// regression - it clobbered that already-correct value with this
+// config's own unrelated e2eRunId-based path, breaking the production-
+// like release-gate run the exact same way this line was meant to fix
+// for the plain-dev-server run.
+if (!smokeBaseUrl) {
+  process.env.LOCAL_STORAGE_PATH = e2eStoragePath;
+}
 
 /**
  * §Phase 12.2 Part B (§12 Worker policy) - three projects, not one:
