@@ -383,35 +383,75 @@ async function main(): Promise<void> {
   if (jsonOutput) playwrightArgs.push("--reporter=json");
   if (spec) playwrightArgs.push(spec);
 
+  // §Phase 13.2 investigation - a real incident: this exact invocation, as
+  // a synchronous execSync(), hangs indefinitely INSIDE release:verify's CI
+  // job specifically (RATE_LIMITER=redis at the job level) while the
+  // identical command in the standalone e2e-production-like job (which
+  // does not set that var at the job level - see this file's own
+  // serverEnv.RATE_LIMITER default) completes in under 4 minutes. execSync
+  // gives no visibility into what's actually stuck once started - swapped
+  // to spawn() + a periodic heartbeat here SPECIFICALLY to gather that
+  // evidence on the next hang (active handles of THIS process, and the
+  // full OS process tree, dumped every 30s) rather than going completely
+  // silent for hours the way the prior execSync-based run did. Not a
+  // behavior change for the passing case - stdio still streams live via
+  // "inherit", same exit-code handling as before.
+  const debugHeartbeatMs = 30_000;
   let playwrightExitCode = 0;
   try {
-    execSync(`pnpm ${playwrightArgs.join(" ")}`, {
-      stdio: jsonOutput ? ["ignore", "ignore", "inherit"] : "inherit",
-      env: {
-        ...process.env,
-        SMOKE_BASE_URL: BASE_URL,
-        // Same value as serverEnv.TEST_MAILBOX_DIR above - provably the
-        // same directory the server just wrote to, not two independent
-        // process.cwd()-based computations that happen to coincide.
-        TEST_MAILBOX_DIR: serverEnv.TEST_MAILBOX_DIR,
-        // Same class of bug as TEST_MAILBOX_DIR above, found via the real
-        // worker-CLI run this now unblocks: runExtractionWorker() (and any
-        // other test helper that shells out to a CLI script via
-        // `dotenv -e .env.e2e`) only sees .env.e2e's static
-        // LOCAL_STORAGE_PATH=./storage default, not the run-specific
-        // tmp/e2e-storage/prod-{runId} directory the spawned server
-        // actually writes uploads to - so the worker CLI looked in the
-        // wrong directory and reported every file "파일을 찾을 수 없습니다."
-        // even though the upload itself succeeded. Threading the server's
-        // own value through here (inherited by execFileSync's default
-        // env passthrough in the spec files) makes every process agree on
-        // one real directory.
-        LOCAL_STORAGE_PATH: serverEnv.LOCAL_STORAGE_PATH,
-        ...(jsonOutput ? { PLAYWRIGHT_JSON_OUTPUT_NAME: jsonOutput } : {}),
-      },
+    playwrightExitCode = await new Promise<number>((resolve, reject) => {
+      const pwChild = spawn("pnpm", playwrightArgs, {
+        stdio: jsonOutput ? ["ignore", "ignore", "inherit"] : "inherit",
+        shell: true,
+        env: {
+          ...process.env,
+          SMOKE_BASE_URL: BASE_URL,
+          // Same value as serverEnv.TEST_MAILBOX_DIR above - provably the
+          // same directory the server just wrote to, not two independent
+          // process.cwd()-based computations that happen to coincide.
+          TEST_MAILBOX_DIR: serverEnv.TEST_MAILBOX_DIR,
+          // Same class of bug as TEST_MAILBOX_DIR above, found via the real
+          // worker-CLI run this now unblocks: runExtractionWorker() (and any
+          // other test helper that shells out to a CLI script via
+          // `dotenv -e .env.e2e`) only sees .env.e2e's static
+          // LOCAL_STORAGE_PATH=./storage default, not the run-specific
+          // tmp/e2e-storage/prod-{runId} directory the spawned server
+          // actually writes uploads to - so the worker CLI looked in the
+          // wrong directory and reported every file "파일을 찾을 수 없습니다."
+          // even though the upload itself succeeded. Threading the server's
+          // own value through here (inherited by execFileSync's default
+          // env passthrough in the spec files) makes every process agree on
+          // one real directory.
+          LOCAL_STORAGE_PATH: serverEnv.LOCAL_STORAGE_PATH,
+          ...(jsonOutput ? { PLAYWRIGHT_JSON_OUTPUT_NAME: jsonOutput } : {}),
+        },
+      });
+
+      const startedAt = Date.now();
+      const heartbeat = setInterval(() => {
+        const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+        const handles = (process as unknown as { _getActiveHandles?: () => object[] })._getActiveHandles?.() ?? [];
+        const handleNames = handles.map((h) => h.constructor?.name ?? "unknown");
+        console.log(`[e2e-prod][heartbeat] playwright still running after ${elapsedSec}s. this-process active handles: ${JSON.stringify(handleNames)}`);
+        try {
+          const psOutput = execSync(process.platform === "win32" ? "tasklist" : "ps -ef --forest", { encoding: "utf8", timeout: 5000 });
+          console.log(`[e2e-prod][heartbeat] process tree:\n${psOutput}`);
+        } catch (psError) {
+          console.log(`[e2e-prod][heartbeat] process tree dump failed: ${psError instanceof Error ? psError.message : psError}`);
+        }
+      }, debugHeartbeatMs);
+
+      pwChild.on("exit", (code) => {
+        clearInterval(heartbeat);
+        resolve(code ?? 1);
+      });
+      pwChild.on("error", (error) => {
+        clearInterval(heartbeat);
+        reject(error);
+      });
     });
-  } catch (error) {
-    playwrightExitCode = (error as { status?: number }).status ?? 1;
+  } catch {
+    playwrightExitCode = 1;
   }
 
   await stopServer();
