@@ -82,3 +82,11 @@ next-env.d.ts
 # Phase 12.2 - per-run E2E storage isolation (tmp/e2e-storage/<run-id>) and
 # any other scratch output - regenerated per run, never committed.
 /tmp
+
+# Phase 13.2 - auto-generated local agent-instruction artifacts, written
+# and re-added by `next dev` (node_modules/next/dist/server/lib/
+# generate-agent-files.js) - not application source, not required for
+# TypeScript/build/tests/runtime. Treated as reproducible local output
+# rather than a committed project artifact.
+/AGENTS.md
+/CLAUDE.md
