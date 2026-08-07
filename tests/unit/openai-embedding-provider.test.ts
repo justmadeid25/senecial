@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InMemoryCircuitBreaker } from "@/server/services/ai/circuit-breaker/in-memory-circuit-breaker";
 import { OpenAiEmbeddingProvider } from "@/server/services/ai/providers/openai-embedding-provider";
@@ -19,8 +19,20 @@ function makeProvider() {
 }
 
 describe("OpenAiEmbeddingProvider (Phase 13 §7 - batch ordering, NaN/Infinity rejection)", () => {
+  // §Phase 13.2 - executeWithResilience() hard-blocks real provider calls
+  // under NODE_ENV=test unless TEST_REAL_AI_PROVIDER=true (see
+  // src/domain/ai/paid-provider-guard.ts). This suite replaces
+  // global.fetch with vi.stubGlobal below, so no real network call is
+  // EVER possible here regardless of this flag - it exists only to get
+  // past the guard so these tests can exercise the provider's real
+  // request-building/response-parsing logic against a safe mock.
+  beforeEach(() => {
+    vi.stubEnv("TEST_REAL_AI_PROVIDER", "true");
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("generateEmbedding returns a validated vector matching the configured dimension", async () => {

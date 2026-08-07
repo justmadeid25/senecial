@@ -19,9 +19,20 @@ import { OpenAiResponsesLlmProvider } from "@/server/services/ai/providers/opena
  *
  *   TEST_OPENAI_API_KEY=sk-... \
  *   pnpm exec dotenv -e .env.test -- vitest run tests/integration/openai-provider-real.test.ts
+ *
+ * §Phase 13.2 - executeWithResilience() now hard-blocks every real
+ * provider call whenever NODE_ENV=test (vitest's own default) unless
+ * TEST_REAL_AI_PROVIDER=true (see src/domain/ai/paid-provider-guard.ts).
+ * This suite sets that flag ITSELF, only once its own pre-existing
+ * TEST_OPENAI_API_KEY gate has already passed - a single env var remains
+ * sufficient to run this opt-in suite; no second flag for an operator to
+ * remember.
  */
 const testApiKey = process.env.TEST_OPENAI_API_KEY;
 const hasOpenAiTest = Boolean(testApiKey);
+if (hasOpenAiTest) {
+  process.env.TEST_REAL_AI_PROVIDER = "true";
+}
 
 describe.skipIf(!hasOpenAiTest)("OpenAI providers against the real OpenAI API (Phase 13 §42)", () => {
   const embeddingProvider = new OpenAiEmbeddingProvider("text-embedding-3-small", {

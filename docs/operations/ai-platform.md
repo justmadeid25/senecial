@@ -192,7 +192,7 @@ pgvector 컬럼은 고정 폭(`vector(256)`, `VECTOR_NATIVE_DIMENSION` - 현재 
 
 ## 실행 상태 (매우 중요)
 
-**이 세션 환경에는 실제 OpenAI credential(`TEST_OPENAI_API_KEY`/`AI_EMBEDDING_API_KEY`/`AI_LLM_API_KEY`)이 없습니다.** §1의 승인 순서(`dry-run → 비용 추정 → 사용자 보고 → 명시적 승인 → --execute`)에 따라 이번 Phase에서는 **`--dry-run`/`--estimate-cost` 경로만 실행**했고, 실제 유료 API 호출(`--execute`)은 전혀 수행하지 않았습니다. 아래 문서화된 모든 실제-네트워크 관련 항목(실제 embedding 호출, 실제 streaming, 실제 429/5xx 대응, dimension별 실측 품질, production/cost baseline 생성)은 **코드/CLI/CI는 완성되어 있으나 미실행** 상태입니다 - 자세한 내용은 이 절 끝의 "남아 있는 문제"를 참고하십시오.
+**[업데이트 - 이후 세션에서 실제 credential로 실행 완료]** 이 절은 원래 "credential 없음, --dry-run만 실행"으로 작성되었으나, 이후 세션에서 사용자가 실제 `OPENAI_API_KEY`를 로컬 `.env`에 설정했고, 승인된 범위(§1 순서: dry-run → 비용 추정 → 보고 → 명시적 승인 → --execute) 내에서 실제 `--execute` 실행이 완료되었습니다: provider 진단(embedding/completion/streaming/abort probe), 256/512/1536(default) 세 dimension 각각의 골든 데이터셋 평가, production quality/cost baseline 생성. 실측 결과는 아래 "Dimension 비교 하네스"/"Production/Cost Baseline" 절과 이 문서 끝의 Phase 13.2 절을 참고하십시오 - production dimension은 실측 결과에 따라 **256을 유지**하기로 확정되었습니다(강제가 아니라 256이 실제로 가장 우수했기 때문). 아래 나머지 서술 중 "미실행"이라고 적힌 부분은 이 갱신 이전에 쓰여진 것이므로, 실제 최신 상태는 이 문단과 Phase 13.2 절을 우선하십시오.
 
 ## Organization-Aware Provider Routing (§10)
 
@@ -235,12 +235,44 @@ pgvector 컬럼은 고정 폭(`vector(256)`, `VECTOR_NATIVE_DIMENSION` - 현재 
 
 `ai-provider-contract-tests`/`ai-production-quality-gate`/`ai-cost-regression` job이 `ai-provider-testing`이라는 **전용** GitHub protected environment를 참조하도록 변경했습니다(기존 `real-infra-tests`는 Postmark/S3/Redis 전용으로 유지). **GitHub 저장소 설정에서 이 environment와 `TEST_OPENAI_API_KEY`/`OPENAI_API_KEY` secret을 실제로 생성하는 작업은 저장소 관리자 권한이 필요하며 이 세션에서 수행할 수 없습니다** - 사용자가 직접 GitHub Settings → Environments에서 생성하고, "Required reviewers" 승인을 활성화해야 합니다.
 
-## 남아 있는 문제 (Phase 13.1, 정직하게 명시)
+## 남아 있는 문제 (Phase 13.1, 정직하게 명시 - 실행 완료 이후 기준은 Phase 13.2 절 참고)
 
-- **실제 OpenAI 호출 전체가 미실행**입니다 (embedding, streaming, abort, 429/5xx 대응, dimension 비교, production/cost baseline 생성, 소규모 backfill) - 이 세션에 credential이 전혀 없었기 때문입니다. `--dry-run`/`--estimate-cost` 경로만 검증했습니다.
-- Dimension 최종 선택(256 유지)은 §6 기준에 따른 **실측 없이** 기존 선택(전략 C)을 유지한 것입니다 - 실측 후 기준 미달이 확인되면 재검토가 필요합니다.
-- `ai-provider-testing` GitHub environment와 관련 secret은 코드/워크플로만 준비되어 있고 실제로 생성되지 않았습니다.
+- **[해결됨]** 실제 OpenAI embedding/completion/streaming/abort probe, 256/512/1536 dimension 실측, production/cost baseline 생성은 이후 세션에서 실제로 완료되었습니다 - 아래 Phase 13.2 절 참고.
+- 소규모 embedding backfill(`pnpm ai:embedding-backfill --execute`)은 여전히 **미실행**입니다 - 실측 시점에 실제 후보(0건)가 없어 의도적으로 건너뛰었습니다.
+- `ai-provider-testing` GitHub environment와 관련 secret은 코드/워크플로만 준비되어 있고 실제로 생성되지 않았습니다(저장소 관리자 권한 필요, 에이전트가 수행 불가).
 - Shadow mode 실제 실행은 여전히 하지 않았습니다(기본 OFF 유지, Phase 13과 동일).
-- Anthropic/Gemini/Azure OpenAI/Ollama LLM provider(Phase 13 이전부터 존재)도 여전히 실 네트워크 미검증입니다 - 이번 Phase는 OpenAI에만 집중했습니다.
+- Anthropic/Gemini/Azure OpenAI/Ollama LLM provider(Phase 13 이전부터 존재)도 여전히 실 네트워크 미검증입니다 - 실행된 실측은 OpenAI에만 국한됩니다.
+- Nightly/정기 실 provider 회귀 실행은 아직 구성되지 않았습니다 - 지금까지의 실측은 모두 수동 1회성 실행입니다.
+
+관련 문서: [monitoring.md](./monitoring.md), [security.md](./security.md), [backup.md](./backup.md)
+
+---
+
+# Phase 13.2 - Provider Safety Guard·Env Isolation·Working Tree Closure
+
+## 발단이 된 사고
+
+Phase 13.1 실측 작업 도중, 무료(개발용) 평가 스크립트(`pnpm ai:evaluate`)를 `.env.test`로 실행하려는 시도가 오히려 **실제 OpenAI에 유료 호출을 1회 발생**시켰습니다. 원인: `.env.test`/`.env.e2e`가 `AI_LLM_PROVIDER`/`AI_EMBEDDING_PROVIDER`를 전혀 지정하지 않았고, `ai-evaluate.ts` 자신도 이 값에 대해 아무 안전장치가 없어, 스크립트 자신의 `import "dotenv/config"`가 root `.env`의 실제 값을 그대로 채웠습니다. dotenv 자체의 우선순위 규칙(이미 설정된 값은 덮어쓰지 않음)은 정상 동작했습니다 - 문제는 애초에 test/e2e 쪽에서 이 값을 지정하지 않았다는 점이었습니다.
+
+## Paid Provider Call Safety (신규)
+
+- **`src/domain/ai/paid-provider-guard.ts`** - 이 안전장치의 단일 진실 공급원.
+  - `assertPaidProviderCallAllowed()` - `executeWithResilience()`의 첫 줄(circuit breaker보다도 먼저)에서 매 real provider 호출마다 실행되는 최종 방어선. `NODE_ENV=test`(vitest 기본값)이면 `TEST_REAL_AI_PROVIDER=true`가 명시적으로 설정되지 않는 한 무조건 차단. `NODE_ENV=production`에서는 절대 차단하지 않음(실제 서비스 트래픽을 막으면 안 됨).
+  - `isPaidProviderCliApproved()`/`assertPaidProviderCliApproved()` - `--execute` 플래그와 `ALLOW_PAID_AI_CALLS=true` 환경변수를 **동등한 승인 신호**로 취급. `ai-evaluate-provider.ts`/`ai-provider-diagnose.ts`/`embedding-backfill.ts` 세 CLI 모두 top-of-main과 실제 호출 직전 두 곳에서 호출.
+  - `forceDevelopmentAiProviders()` - `ai-evaluate.ts`가 무조건 호출. `.env`에 무엇이 있든 `AI_LLM_PROVIDER`/`AI_EMBEDDING_PROVIDER`를 `development`로 강제 - 이 스크립트는 파이프라인 자체를 점검하는 용도이지 실제 provider 품질 측정 용도가 아니므로, 애초에 유료 호출 경로가 존재하지 않아야 합니다.
+- **credential 존재 ≠ 실행 승인** - `OPENAI_API_KEY`가 `.env`에 있다는 사실만으로는 어떤 evaluation/test/CI 경로도 실제 호출을 하지 않습니다. 실행에는 항상 (1) NODE_ENV가 test가 아니거나 명시적 opt-in이 있고, (2) CLI 스크립트라면 `--execute`/`ALLOW_PAID_AI_CALLS=true` 승인이 있어야 합니다.
+- **`.env.test`/`.env.e2e`** - `AI_LLM_PROVIDER=development`/`AI_EMBEDDING_PROVIDER=development`를 명시적으로 선언(기존 `CONTRACT_EXTRACTION_PROVIDER`/`CLAUSE_SEGMENTATION_PROVIDER` 등과 동일한 기존 컨벤션을 따름 - 이전에는 AI 변수만 이 목록에서 누락되어 있었습니다). `.env.e2e`는 `test:e2e:prod`가 `NODE_ENV=production`으로 앱을 기동하므로 `ALLOW_DEVELOPMENT_AI_PROVIDER=true`가 필요(`.env.test`는 `NODE_ENV=test`라 `false`로 충분).
+- **실제 provider 단위 테스트(fetch를 직접 mock하는 테스트)**는 `TEST_REAL_AI_PROVIDER=true`를 스스로 `beforeEach`에서 설정합니다 - 실제 네트워크 호출이 아니라 mock된 fetch를 쓰기 때문에 안전하지만, 새 guard가 mock 여부를 알 수 없으므로 이 테스트 파일들이 명시적으로 opt-in합니다(`tests/unit/openai-responses-llm-provider.test.ts`, `tests/unit/openai-embedding-provider.test.ts`).
+- `tests/integration/openai-provider-real.test.ts`(진짜 실 provider opt-in 테스트)는 자신의 기존 `TEST_OPENAI_API_KEY` 게이트를 통과한 경우에만 `TEST_REAL_AI_PROVIDER=true`를 스스로 설정 - 운영자가 기억해야 할 환경변수는 여전히 하나(`TEST_OPENAI_API_KEY`)뿐입니다.
+
+## 검증
+
+`tests/unit/paid-provider-guard.test.ts`(순수 함수), `tests/unit/execute-with-resilience-paid-guard.test.ts`(circuit breaker에 부작용이 전혀 없음을 증명), `tests/integration/paid-provider-guard-blocks-real-calls.test.ts`(실제 모양의 `OPENAI_API_KEY`가 있어도 `global.fetch`가 단 한 번도 호출되지 않음을 fetch spy로 증명). 실 credential이 로컬 `.env`에 있는 상태에서 `pnpm ai:evaluate --compare --gate`/`pnpm release:verify`를 실제로 실행해 개발자 provider 강제 사용과 0회 네트워크 호출을 직접 확인했습니다.
+
+## 남아 있는 문제 (Phase 13.2)
+
+- 이 안전장치는 AI(embedding/LLM) provider에만 적용됩니다 - 다른 외부 provider(메일, malware scanner, extraction 등)는 기존의 개별 `ALLOW_DEVELOPMENT_*` 패턴에 계속 의존합니다(범위 밖).
+- `scripts/` 아래 나머지 ~40개 CLI(백업/복구/메일/추출 워커 등)의 `import "dotenv/config"` 패턴은 그대로 유지했습니다 - 실제 조사 결과 이들은 AI provider를 전혀 다루지 않으며, dotenv 자체의 우선순위 규칙도 정상 동작하는 것으로 확인되어 이번 Phase의 범위(AI paid-call 안전)를 벗어난 리팩터링으로 판단해 손대지 않았습니다.
+- Nightly 실 provider 회귀, shadow mode 실행, Anthropic/Gemini/Azure/Ollama 실 네트워크 검증은 Phase 13.1과 마찬가지로 여전히 미완료입니다.
 
 관련 문서: [monitoring.md](./monitoring.md), [security.md](./security.md), [backup.md](./backup.md)

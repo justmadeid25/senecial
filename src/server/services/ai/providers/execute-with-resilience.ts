@@ -1,5 +1,6 @@
 import type { CircuitBreaker } from "@/domain/ai/circuit-breaker";
 import { computeBackoffMs, DEFAULT_RETRY_POLICY, type RetryPolicyConfig } from "@/domain/ai/retry-policy";
+import { assertPaidProviderCallAllowed } from "@/domain/ai/paid-provider-guard";
 import { normalizeProviderError, PROVIDER_ERROR_CODES, ProviderError } from "@/domain/ai/provider-error";
 import { getLogger } from "@/server/logging";
 import { recordCircuitState, recordProviderCall } from "@/server/monitoring/metrics";
@@ -38,6 +39,11 @@ export interface ExecuteWithResilienceParams<T> {
 export async function executeWithResilience<T>(params: ExecuteWithResilienceParams<T>): Promise<T> {
   const { providerName, operation, circuitBreaker, timeoutMs, requestId } = params;
   const retryPolicy = params.retryPolicy ?? DEFAULT_RETRY_POLICY;
+
+  // §Phase 13.2 - checked BEFORE the circuit breaker/retry loop so a block
+  // here is never counted as a provider failure or retried - it is a
+  // local policy decision, not something the provider returned.
+  assertPaidProviderCallAllowed({ providerName, operation });
 
   const token = await circuitBreaker.beforeCall(providerName);
   recordCircuitState(providerName, token.state);

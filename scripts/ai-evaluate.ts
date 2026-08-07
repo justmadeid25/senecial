@@ -2,6 +2,22 @@ import "dotenv/config";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { forceDevelopmentAiProviders } from "../src/domain/ai/paid-provider-guard";
+
+// §Phase 13.2 - `pnpm ai:evaluate` (and by extension `release:verify`'s
+// own "AI evaluation release gate" step, which calls this exact script)
+// exists to sanity-check the retrieval/answer PIPELINE, never to measure a
+// real provider's quality - that is `ai:evaluate:provider --execute`'s
+// job, gated behind an explicit --execute/ALLOW_PAID_AI_CALLS approval
+// (see src/domain/ai/paid-provider-guard.ts). This script must therefore
+// NEVER be capable of a real paid call, regardless of what AI_LLM_PROVIDER/
+// AI_EMBEDDING_PROVIDER happen to resolve to from .env - forced here,
+// unconditionally, before any provider factory is ever touched. This is
+// the direct fix for a real incident: a bare `pnpm ai:evaluate` run
+// silently made a real OpenAI call because root .env had real credentials
+// and this script had no safety rail of its own.
+forceDevelopmentAiProviders();
+
 import {
   renderEvaluationComparisonMarkdown,
   renderEvaluationReportMarkdown,
@@ -87,6 +103,7 @@ async function runOnce(vectorProvider?: string): Promise<EvaluationComparisonEnt
  */
 async function main() {
   const { compare, gate, vectorProvider } = parseArgs();
+  console.log("[ai:evaluate] development provider 강제 사용 (실제 provider 호출 없음) - 실제 provider 품질 측정은 `pnpm ai:evaluate:provider --execute`를 사용하십시오.");
 
   if (compare) {
     console.log("AI 평가 비교 시작 (application vs pgvector, 동일 골든 데이터셋)...");

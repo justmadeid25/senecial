@@ -2,6 +2,7 @@ import "dotenv/config";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { assertPaidProviderCliApproved, isPaidProviderCliApproved } from "../src/domain/ai/paid-provider-guard";
 import { estimateAiCostMinor, formatCostMinorAsUsd } from "../src/domain/ai/pricing";
 import { renderEvaluationReportMarkdown } from "../src/domain/ai/evaluation/evaluation-report-markdown";
 import { evaluateReleaseGate } from "../src/domain/ai/evaluation/release-gate";
@@ -19,7 +20,9 @@ function parseArgs() {
   const dimensionArg = args.find((arg) => arg.startsWith("--dimension="));
   return {
     estimateCost: args.includes("--estimate-cost") || args.includes("--dry-run"),
-    execute: args.includes("--execute"),
+    // §Phase 13.2 - ALLOW_PAID_AI_CALLS=true is an equivalent approval
+    // signal to --execute (see src/domain/ai/paid-provider-guard.ts).
+    execute: isPaidProviderCliApproved(args.includes("--execute")),
     /** §Phase 13.1 Part 5 - "256"|"512"|"1536"|"default" (native, no truncation param - see openai-embedding-provider.ts's OPENAI_EMBEDDING_NATIVE_DIMENSIONS). */
     dimension: dimensionArg?.split("=")[1],
   };
@@ -98,6 +101,10 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+
+  // §Phase 13.2 - last line of defense, immediately before the actual paid
+  // trigger, redundant with the top-of-main dry-run branch above by design.
+  assertPaidProviderCliApproved({ operation: "ai:evaluate:provider", execute });
 
   console.log("\n실제 provider로 골든 데이터셋 평가를 실행합니다 (유료 호출 발생)...");
   const runStart = performance.now();

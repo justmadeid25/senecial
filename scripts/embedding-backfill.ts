@@ -1,5 +1,6 @@
 import "dotenv/config";
 
+import { assertPaidProviderCliApproved, isPaidProviderCliApproved } from "../src/domain/ai/paid-provider-guard";
 import { formatCostMinorAsUsd } from "../src/domain/ai/pricing";
 import { dryRunEmbeddingBackfill, runEmbeddingBackfill } from "../src/features/ai/server/run-embedding-backfill";
 import { prisma } from "../src/server/db/client";
@@ -8,7 +9,9 @@ const DEFAULT_LIMIT = 500;
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const execute = args.includes("--execute");
+  // §Phase 13.2 - ALLOW_PAID_AI_CALLS=true is an equivalent approval
+  // signal to --execute (see src/domain/ai/paid-provider-guard.ts).
+  const execute = isPaidProviderCliApproved(args.includes("--execute"));
   // --resume is not a distinct code path, same rationale as vector-backfill.ts's
   // own --resume flag - the candidate query always selects whatever clauses
   // still lack the currently-configured provider's embedding, so re-running
@@ -58,6 +61,10 @@ async function main() {
     console.log("\n[dry-run] --execute가 없어 실제 provider 호출 없이 종료합니다.");
     return;
   }
+
+  // §Phase 13.2 - last line of defense, immediately before the actual paid
+  // trigger, redundant with the top-of-main dry-run branch above by design.
+  assertPaidProviderCliApproved({ operation: "ai:embedding-backfill", execute });
 
   console.log(`\n실제 백필 시작 (limit=${limit}${resume ? ", --resume" : ""}${organizationId ? `, organization=${organizationId}` : ""})...`);
   const result = await runEmbeddingBackfill({ limit, organizationId });
