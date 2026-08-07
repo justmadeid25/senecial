@@ -4,7 +4,7 @@ import { EMBEDDING_ERROR_CODES } from "@/domain/ai/embedding-error-codes";
 import { AiDisabledError, ExternalAiProcessingDisabledError } from "@/domain/ai/external-ai-policy";
 import { estimateAiCostMinor } from "@/domain/ai/pricing";
 import { prisma } from "@/server/db/client";
-import { recordDependencyLatency } from "@/server/monitoring/metrics";
+import { recordDependencyLatency, recordEmbeddingTokenUsage } from "@/server/monitoring/metrics";
 import { releaseAiBudget, reserveAiBudget, settleAiBudget } from "@/server/services/ai/budget/reserve-ai-budget";
 import { getAiRuntimeConfiguration } from "@/server/services/ai/get-ai-runtime-configuration";
 import { getEmbeddingProviderForOrganization } from "@/server/services/ai/get-embedding-provider-for-organization";
@@ -113,6 +113,9 @@ async function runClaimedJob(job: EmbeddingJobRow): Promise<void> {
     const result = await provider.generateEmbedding(clause.normalizedText);
     const durationMs = performance.now() - start;
     recordDependencyLatency("embedding", durationMs);
+    if (result.usage?.inputTokens !== undefined) {
+      recordEmbeddingTokenUsage(result.usage.inputTokens);
+    }
 
     await createLatestClauseEmbedding({
       organizationId: clause.organizationId,

@@ -25,8 +25,28 @@ export interface LlmDiagnoseResult {
   providerName?: string;
   modelName?: string;
   configError?: string;
-  completionProbe?: { ok: boolean; latencyMs?: number; inputTokens?: number; outputTokens?: number; errorCode?: string };
-  streamingProbe?: { ok: boolean; chunkCount?: number; receivedUsageEvent?: boolean; receivedProviderRequestId?: boolean; errorCode?: string };
+  completionProbe?: {
+    ok: boolean;
+    latencyMs?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    /** Opaque, safe-length id only (never a full request/response echo) - §15's "provider request ID는 안전한 길이와 문자만 허용해 저장할 수 있습니다". */
+    providerRequestId?: string;
+    errorCode?: string;
+  };
+  streamingProbe?: {
+    ok: boolean;
+    chunkCount?: number;
+    receivedUsageEvent?: boolean;
+    receivedProviderRequestId?: boolean;
+    providerRequestId?: string;
+    /** Wall-clock time from stream() call to the FIRST text-delta event - not tracked anywhere else in this codebase (the golden evaluation uses non-streaming askQuestion()), so this diagnostic probe is the only real source of this number. */
+    firstTokenLatencyMs?: number;
+    totalLatencyMs?: number;
+    errorCode?: string;
+  };
+  /** §Phase 13.1 (real-provider verification) - a SEPARATE, deliberately-aborted stream call, never sharing state with streamingProbe above. Aborts as soon as the first text-delta arrives (same bounded pattern as tests/integration/openai-provider-real.test.ts's own abort test) - never lets an open-ended prompt run to completion. */
+  abortProbe?: { ok: boolean; abortHonoredAsError: boolean; receivedAnyDeltaBeforeAbort: boolean; errorCode?: string };
 }
 
 export interface AiProviderDiagnoseResult {
@@ -99,6 +119,7 @@ async function diagnoseLlm(execute: boolean): Promise<LlmDiagnoseResult> {
       latencyMs: Math.round(performance.now() - completionStart),
       inputTokens: result.usage.promptTokens,
       outputTokens: result.usage.completionTokens,
+      providerRequestId: result.providerRequestId,
     };
   } catch (error) {
     const normalized = normalizeProviderError({ error, providerName: provider.providerName });
@@ -107,21 +128,71 @@ async function diagnoseLlm(execute: boolean): Promise<LlmDiagnoseResult> {
 
   let streamingProbe: LlmDiagnoseResult["streamingProbe"];
   try {
+    const streamStart = performance.now();
+    let firstTokenLatencyMs: number | undefined;
     let chunkCount = 0;
     let receivedUsageEvent = false;
     let receivedProviderRequestId = false;
+    let providerRequestId: string | undefined;
     for await (const event of provider.stream(messages)) {
-      if (event.type === "text-delta") chunkCount += 1;
+      if (event.type === "text-delta") {
+        chunkCount += 1;
+        if (firstTokenLatencyMs === undefined) {
+          firstTokenLatencyMs = Math.round(performance.now() - streamStart);
+        }
+      }
       if (event.type === "usage") receivedUsageEvent = true;
-      if (event.type === "provider-request-id") receivedProviderRequestId = true;
+      if (event.type === "provider-request-id") {
+        receivedProviderRequestId = true;
+        providerRequestId = event.value;
+      }
     }
-    streamingProbe = { ok: true, chunkCount, receivedUsageEvent, receivedProviderRequestId };
+    streamingProbe = {
+      ok: true,
+      chunkCount,
+      receivedUsageEvent,
+      receivedProviderRequestId,
+      providerRequestId,
+      firstTokenLatencyMs,
+      totalLatencyMs: Math.round(performance.now() - streamStart),
+    };
   } catch (error) {
     const normalized = normalizeProviderError({ error, providerName: provider.providerName });
     streamingProbe = { ok: false, errorCode: normalized.errorCode };
   }
 
-  return { ...base, completionProbe, streamingProbe };
+  // §Phase 13.1 (real-provider verification) - abort propagation probe:
+  // deliberately open-ended prompt, aborted on the FIRST text-delta (never
+  // lets generation run further) - verifies the abort actually terminates
+  // the stream (rejects) rather than silently completing.
+  let abortProbe: LlmDiagnoseResult["abortProbe"];
+  try {
+    const controller = new AbortController();
+    let receivedAnyDeltaBeforeAbort = false;
+    let abortHonoredAsError = false;
+    try {
+      for await (const event of provider.stream(
+        [
+          { role: "system" as const, content: "숫자를 1부터 20까지 한 줄에 하나씩 답하십시오." },
+          { role: "user" as const, content: DIAGNOSTIC_PROBE_TEXT },
+        ],
+        { abortSignal: controller.signal }
+      )) {
+        if (event.type === "text-delta") {
+          receivedAnyDeltaBeforeAbort = true;
+          controller.abort();
+        }
+      }
+    } catch {
+      abortHonoredAsError = true;
+    }
+    abortProbe = { ok: true, abortHonoredAsError, receivedAnyDeltaBeforeAbort };
+  } catch (error) {
+    const normalized = normalizeProviderError({ error, providerName: provider.providerName });
+    abortProbe = { ok: false, abortHonoredAsError: false, receivedAnyDeltaBeforeAbort: false, errorCode: normalized.errorCode };
+  }
+
+  return { ...base, completionProbe, streamingProbe, abortProbe };
 }
 
 export async function diagnoseAiProviders(params: { execute: boolean }): Promise<AiProviderDiagnoseResult> {

@@ -17,6 +17,7 @@ import { getEmbeddingProvider } from "@/server/services/ai/get-embedding-provide
 import {
   recordCacheEvent,
   recordDependencyLatency,
+  recordEmbeddingTokenUsage,
   recordLatencyBudgetExceeded,
   recordRetrievalHit,
 } from "@/server/monitoring/metrics";
@@ -88,6 +89,9 @@ async function getCachedQueryEmbedding(
     const result = await embeddingProvider.generateEmbedding(normalizedQuestion);
     const embeddingDurationMs = performance.now() - embeddingStart;
     recordDependencyLatency("embedding", embeddingDurationMs);
+    if (result.usage?.inputTokens !== undefined) {
+      recordEmbeddingTokenUsage(result.usage.inputTokens);
+    }
     const isDevelopmentEmbedding = embeddingProvider.providerName === DEVELOPMENT_PROVIDER_NAME;
     if (exceedsLatencyBudget("embedding", embeddingDurationMs, isDevelopmentEmbedding)) {
       recordLatencyBudgetExceeded("embedding");

@@ -1,10 +1,13 @@
 import "dotenv/config";
 
+import { assertPaidProviderCliApproved, isPaidProviderCliApproved } from "../src/domain/ai/paid-provider-guard";
 import { diagnoseAiProviders } from "../src/features/ai/server/diagnose-ai-providers";
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  return { execute: args.includes("--execute") };
+  // §Phase 13.2 - ALLOW_PAID_AI_CALLS=true is an equivalent approval
+  // signal to --execute (see src/domain/ai/paid-provider-guard.ts).
+  return { execute: isPaidProviderCliApproved(args.includes("--execute")) };
 }
 
 /**
@@ -22,6 +25,12 @@ function parseArgs() {
 async function main() {
   const { execute } = parseArgs();
   console.log(`AI provider 진단 시작${execute ? " (--execute: 실제 provider 호출 포함)" : " (dry-run: 설정만 확인, 실제 호출 없음)"}...`);
+
+  // §Phase 13.2 - last line of defense, immediately before the actual paid
+  // trigger (diagnoseAiProviders only makes real calls when execute=true).
+  if (execute) {
+    assertPaidProviderCliApproved({ operation: "ai:provider-diagnose", execute });
+  }
 
   const result = await diagnoseAiProviders({ execute });
 
@@ -57,8 +66,16 @@ async function main() {
       const p = result.llm.streamingProbe;
       console.log(
         p.ok
-          ? `  streaming probe: OK (chunks=${p.chunkCount}, usage event=${p.receivedUsageEvent}, request-id event=${p.receivedProviderRequestId})`
+          ? `  streaming probe: OK (chunks=${p.chunkCount}, first-token=${p.firstTokenLatencyMs}ms, total=${p.totalLatencyMs}ms, usage event=${p.receivedUsageEvent}, request-id=${p.providerRequestId ?? "N/A"})`
           : `  streaming probe: FAIL (${p.errorCode})`
+      );
+    }
+    if (result.llm.abortProbe) {
+      const p = result.llm.abortProbe;
+      console.log(
+        p.ok
+          ? `  abort probe: delta received=${p.receivedAnyDeltaBeforeAbort}, abort propagated as error=${p.abortHonoredAsError}`
+          : `  abort probe: FAIL (${p.errorCode})`
       );
     }
   }

@@ -74,6 +74,21 @@ interface LlmUsageByProviderEntry {
 }
 const llmUsageByProvider = new Map<string, LlmUsageByProviderEntry>();
 
+/** §Phase 13.1 (real-provider verification exercise) - mirrors promptTokensTotal/completionTokensTotal's role but for embedding input tokens, which had no equivalent counter. Only ever incremented with a REAL provider-reported count (never an estimate - see call sites in process-embedding-job.ts / hybrid-search-clauses.ts). */
+let embeddingTokensTotal = 0;
+
+export function recordEmbeddingTokenUsage(inputTokens: number): void {
+  embeddingTokensTotal += inputTokens;
+}
+
+/** In-process snapshot getters - unlike the DB-backed AiUsageRecord, these survive a temp/fixture organization's row cascade-delete (see run-ai-evaluation.ts's cleanup), which is exactly why the provider-comparison CLIs read real usage through here rather than querying AiUsageRecord after a fixture-org run completes. */
+export function getEmbeddingTokensTotalSnapshot(): number {
+  return embeddingTokensTotal;
+}
+export function getLlmTokensTotalSnapshot(): { promptTokens: number; completionTokens: number } {
+  return { promptTokens: promptTokensTotal, completionTokens: completionTokensTotal };
+}
+
 /** Phase 12.1 Part 14 - vector-search-specific counters/gauges. `staleEmbeddingCount` is a gauge (last-measured snapshot, e.g. from the backfill CLI or a scan), everything else is a running counter. */
 const vectorCandidateCounts = newSummary();
 let vectorFallbackTotal = 0;
@@ -203,6 +218,20 @@ export function recordRequest(route: string, status: number, durationMs: number)
 export function recordDependencyLatency(dependency: keyof typeof dependencyLatencies, durationMs: number): void {
   addSample(dependencyLatencies[dependency], durationMs);
   logIfSlow(`dependency.${dependency}`, durationMs);
+}
+
+/**
+ * §Phase 13.1 (real-provider verification exercise) - a structured,
+ * in-process snapshot of one dependency's accumulated latency, for
+ * callers (the provider-comparison CLIs) that need actual numbers rather
+ * than the Prometheus TEXT exposition format. Never resets the
+ * underlying counters - a caller comparing successive runs within the
+ * same process must diff two snapshots itself (see
+ * scripts/ai-evaluate-provider.ts).
+ */
+export function getDependencyLatencySnapshot(dependency: keyof typeof dependencyLatencies): { count: number; avgMs: number; maxMs: number } {
+  const summary = dependencyLatencies[dependency];
+  return { count: summary.count, avgMs: summary.count > 0 ? summary.sum / summary.count : 0, maxMs: summary.max };
 }
 
 /** §Phase 12.1 Part 14 - how many candidates a single vector search returned, before topK truncation elsewhere in the pipeline. */
