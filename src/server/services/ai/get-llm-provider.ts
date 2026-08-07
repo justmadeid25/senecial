@@ -65,18 +65,28 @@ export function buildLlmProviderForDriver(params: {
   shared: SharedLlmRuntimeConfig;
 }): LlmProvider {
   const { driver, modelEnvVar, apiKeyEnvVar, isProduction, shared } = params;
+
+  // §Phase 13.2 - "development" returns BEFORE getAiCircuitBreaker() is ever
+  // called. A real incident: with RATE_LIMITER=redis (this codebase reuses
+  // that var for the AI circuit breaker too - see getAiCircuitBreaker()'s
+  // own docstring), the old unconditional call opened a real Redis
+  // connection even for the no-network development driver. Nothing ever
+  // closed it, so a short-lived CLI script (scripts/ai-evaluate.ts) hung
+  // indefinitely in CI after its own work had already finished, because an
+  // open ioredis connection keeps the Node.js event loop alive.
+  if (driver === "development") {
+    if (isProduction && process.env.ALLOW_DEVELOPMENT_AI_PROVIDER !== "true") {
+      throw new Error(
+        "AI_LLM_PROVIDER=development은 운영 환경에서 사용할 수 없습니다. 실제 LLM 공급자를 연동하거나, " +
+          "위험을 감수하고 명시적으로 ALLOW_DEVELOPMENT_AI_PROVIDER=true를 설정하십시오."
+      );
+    }
+    return new DeterministicDevelopmentLlmProvider();
+  }
+
   const circuitBreaker = getAiCircuitBreaker();
 
   switch (driver) {
-    case "development": {
-      if (isProduction && process.env.ALLOW_DEVELOPMENT_AI_PROVIDER !== "true") {
-        throw new Error(
-          "AI_LLM_PROVIDER=development은 운영 환경에서 사용할 수 없습니다. 실제 LLM 공급자를 연동하거나, " +
-            "위험을 감수하고 명시적으로 ALLOW_DEVELOPMENT_AI_PROVIDER=true를 설정하십시오."
-        );
-      }
-      return new DeterministicDevelopmentLlmProvider();
-    }
     case "openai": {
       const apiKey = requireEnv(apiKeyEnvVar);
       const baseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";

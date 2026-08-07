@@ -183,4 +183,13 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    // §Phase 13.2 - a real incident: this short-lived CLI script hung
+    // indefinitely in CI (all its own work had already finished and
+    // printed) because some transitively-opened connection (a Redis
+    // client, in the case that was found and fixed - see
+    // get-llm-provider.ts) kept the Node.js event loop alive. An explicit
+    // exit is the standard, robust defense for a one-shot CLI script -
+    // it must never depend on every dependency remembering to close every
+    // connection it opens.
+    process.exit(process.exitCode ?? 0);
   });
