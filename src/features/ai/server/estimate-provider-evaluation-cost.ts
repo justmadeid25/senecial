@@ -17,6 +17,7 @@ const ASSUMED_ANSWER_TOKENS_PER_QUESTION = 150;
 export interface ProviderEvaluationCostEstimate {
   embeddingProvider: string;
   embeddingModel: string;
+  embeddingDimension: number;
   llmProvider: string;
   llmModel: string;
   questionCount: number;
@@ -68,6 +69,7 @@ export function estimateProviderEvaluationCost(): ProviderEvaluationCostEstimate
   return {
     embeddingProvider: embeddingProvider.providerName,
     embeddingModel: embeddingProvider.modelName,
+    embeddingDimension: embeddingProvider.dimension,
     llmProvider: llmProvider.providerName,
     llmModel: llmProvider.modelName,
     questionCount: GOLDEN_DATASET_QUESTIONS.length,

@@ -1,5 +1,6 @@
 import type { Citation } from "@/domain/ai/citation";
 import { buildContext, deduplicateByNormalizedText } from "@/domain/ai/context-builder";
+import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
 
 import { hybridSearchClauses } from "./hybrid-search-clauses";
 
@@ -15,6 +16,7 @@ export async function retrieveContext(params: {
   organizationId: string;
   question: string;
   topK?: number;
+  embeddingProvider?: EmbeddingProvider;
 }): Promise<Citation[]> {
   const results = await hybridSearchClauses(params);
   const deduped = deduplicateByNormalizedText(results);

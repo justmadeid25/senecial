@@ -79,10 +79,25 @@ jobs:
   # Separate job (not steps in real-infra-tests above) so it can be skipped
   # entirely - not just individual steps - when no AI provider secret is
   # configured, without affecting the unrelated Postmark/S3/Redis job.
+  #
+  # §Phase 13.1 §16 - these three AI jobs use their OWN protected
+  # environment ("ai-provider-testing", distinct from "real-infra-tests"
+  # above) so approval/secret access can be scoped separately for paid
+  # OpenAI calls vs. the free-tier Postmark/S3/Redis infra tests. THIS
+  # ENVIRONMENT MUST BE CREATED MANUALLY in GitHub repo Settings ->
+  # Environments (with "Required reviewers" enabled) before these jobs can
+  # run with real credentials - not something this codebase/CI config can
+  # provision on its own. Required secrets: TEST_OPENAI_API_KEY (contract
+  # tests) and OPENAI_API_KEY (quality gate / cost regression - the SAME
+  # var name the app itself reads via OPENAI_API_KEY, see
+  # get-embedding-provider.ts/get-llm-provider.ts; this codebase
+  # deliberately does not use separate AI_EMBEDDING_API_KEY/AI_LLM_API_KEY
+  # names since embedding+LLM share one OpenAI account/key by design -
+  # Part 3's recommended combo).
   ai-provider-contract-tests:
     name: ai-provider-contract-tests
     runs-on: ubuntu-latest
-    environment: real-infra-tests
+    environment: ai-provider-testing
     env:
       TEST_OPENAI_API_KEY: ${{ secrets.TEST_OPENAI_API_KEY }}
     steps:
@@ -111,7 +126,7 @@ jobs:
   ai-production-quality-gate:
     name: ai-production-quality-gate
     runs-on: ubuntu-latest
-    environment: real-infra-tests
+    environment: ai-provider-testing
     needs: ai-provider-contract-tests
     services:
       postgres:
@@ -163,7 +178,7 @@ jobs:
   ai-cost-regression:
     name: ai-cost-regression
     runs-on: ubuntu-latest
-    environment: real-infra-tests
+    environment: ai-provider-testing
     needs: ai-production-quality-gate
     if: ${{ needs.ai-production-quality-gate.result == 'success' }}
     steps:
@@ -184,7 +199,7 @@ jobs:
       - name: AI cost regression check against committed baseline
         run: |
           if [ -f reports/ai-evaluation-provider-report.json ]; then
-            pnpm ai:cost-regression
+            pnpm ai:cost-regression --gate
           else
             echo "ai-evaluation-provider-report.json이 없습니다 (production quality gate가 실제 실행되지 않았을 수 있음) - 건너뜁니다."
           fi

@@ -66,6 +66,16 @@ export class OpenAiResponsesLlmProvider implements LlmProvider {
       max_output_tokens: options?.maxOutputTokens ?? this.config.defaultMaxOutputTokens,
       temperature: options?.temperature ?? this.config.defaultTemperature,
       stream,
+      // §Phase 13.1 Part 3 - ALWAYS explicit, never left to the API's own
+      // default (which may retain request/response data server-side for a
+      // period - see docs/operations/ai-platform.md's "Data Governance"
+      // section for exactly what store:false does and does NOT guarantee,
+      // e.g. it is NOT the same as an approved Zero Data Retention
+      // agreement). No hosted tool/file/vector store is ever referenced
+      // here either - only the plain `input` messages this class itself
+      // built from already-minimized citation evidence (see
+      // domain/ai/prompt-builder.ts).
+      store: false,
     };
   }
 

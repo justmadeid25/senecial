@@ -24,6 +24,20 @@ export const OPENAI_EMBEDDING_DEFAULT_MODEL = "text-embedding-3-small";
 /** OpenAI's documented `input` array limit is far higher, but a smaller client-side cap keeps any single request's latency/blast-radius bounded - see run-embedding-backfill.ts, which chunks larger jobs into calls of this size. */
 export const OPENAI_EMBEDDING_MAX_BATCH_SIZE = 96;
 
+/**
+ * §Phase 13.1 Part 5 - a model's NATIVE (untruncated) output dimension,
+ * used only when AI_EMBEDDING_DIMENSION=default (dimension comparison
+ * evaluation - see estimate-provider-evaluation-cost.ts /
+ * ai-evaluate-provider.ts's `--dimension` flag). Hardcoded because OpenAI's
+ * API does not expose a "what is this model's native dimension" endpoint -
+ * these are the published values from OpenAI's own model documentation.
+ */
+export const OPENAI_EMBEDDING_NATIVE_DIMENSIONS: Record<string, number> = {
+  "text-embedding-3-small": 1536,
+  "text-embedding-3-large": 3072,
+  "text-embedding-ada-002": 1536,
+};
+
 interface OpenAiEmbeddingConfig {
   apiKey: string;
   baseUrl: string;
@@ -31,6 +45,8 @@ interface OpenAiEmbeddingConfig {
   timeoutMs: number;
   retryPolicy: RetryPolicyConfig;
   circuitBreaker: CircuitBreaker;
+  /** §Phase 13.1 Part 5 - true only for the "default" dimension-comparison run: sends no `dimensions` param at all, letting OpenAI return the model's full native-width embedding rather than a Matryoshka-truncated one. */
+  omitDimensionsParam?: boolean;
 }
 
 interface OpenAiEmbeddingApiResponse {
@@ -85,7 +101,11 @@ export class OpenAiEmbeddingProvider implements EmbeddingProvider {
           method: "POST",
           headers: this.buildHeaders(),
           signal,
-          body: JSON.stringify({ model: this.modelName, input, dimensions: this.config.dimension }),
+          body: JSON.stringify(
+            this.config.omitDimensionsParam
+              ? { model: this.modelName, input }
+              : { model: this.modelName, input, dimensions: this.config.dimension }
+          ),
         });
         if (!response.ok) {
           throw new ProviderError({

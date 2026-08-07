@@ -208,6 +208,7 @@ export default async function AiUsagePage({
                         <TableHead>평균 latency</TableHead>
                         <TableHead>실패</TableHead>
                         <TableHead>Fallback</TableHead>
+                        <TableHead>Canary</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -222,6 +223,7 @@ export default async function AiUsagePage({
                           <TableCell>{row.avgLatencyMs.toLocaleString("ko-KR")}ms</TableCell>
                           <TableCell>{row.failureCount.toLocaleString("ko-KR")}</TableCell>
                           <TableCell>{row.fallbackCount.toLocaleString("ko-KR")}</TableCell>
+                          <TableCell>{row.canaryCount.toLocaleString("ko-KR")}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

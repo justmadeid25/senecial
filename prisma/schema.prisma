@@ -1289,6 +1289,10 @@ model Message {
   vectorSearchProvider     String?
   promptTemplateVersion    String?
   citationValidatorVersion String?
+  /**
+   * §Phase 13.1 Part 11 - true iff this ASSISTANT message was served by the CANARY LLM provider (stable org-hash routing), never true for a failover/fallback-served message - "fallback과 canary를 구분" (see AiUsageRecord.canaryUsed's identical distinction). Null for USER messages, same as every other provenance field above.
+   */
+  canaryUsed               Boolean?
 
   conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1398,6 +1402,10 @@ model AiUsageRecord {
    */
   errorCode          String?
   fallbackUsed       Boolean  @default(false)
+  /**
+   * §Phase 13.1 Part 11 - true iff `provider`/`model` above reflect the CANARY provider (stable org-hash routing), distinct from fallbackUsed (infra-failure-triggered) - never both true for the same row (canary and failover are mutually exclusive routing decisions for a single call).
+   */
+  canaryUsed         Boolean  @default(false)
   aiConfigVersion    String
   aiConfigChecksum   String
   createdAt          DateTime @default(now())

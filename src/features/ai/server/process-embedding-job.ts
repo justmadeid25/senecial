@@ -6,9 +6,9 @@ import { estimateAiCostMinor } from "@/domain/ai/pricing";
 import { prisma } from "@/server/db/client";
 import { recordDependencyLatency } from "@/server/monitoring/metrics";
 import { releaseAiBudget, reserveAiBudget, settleAiBudget } from "@/server/services/ai/budget/reserve-ai-budget";
-import { enforceOrganizationAiPolicy } from "@/server/services/ai/enforce-organization-ai-policy";
 import { getAiRuntimeConfiguration } from "@/server/services/ai/get-ai-runtime-configuration";
-import { getEmbeddingProvider } from "@/server/services/ai/get-embedding-provider";
+import { getEmbeddingProviderForOrganization } from "@/server/services/ai/get-embedding-provider-for-organization";
+import { loadOrganizationAiContext } from "@/server/services/ai/load-organization-ai-context";
 import { recordAiUsageBestEffort } from "@/server/services/ai/record-ai-usage-best-effort";
 import { createLatestClauseEmbedding } from "@/server/repositories/clause-embedding-repository";
 import {
@@ -57,14 +57,18 @@ async function runClaimedJob(job: EmbeddingJobRow): Promise<void> {
     return;
   }
 
-  const provider = getEmbeddingProvider();
-
-  // §Phase 13 Part H (§30) - checked BEFORE any provider call, and BEFORE
-  // the budget reservation below (an org with AI disabled has no business
-  // reserving budget it will never spend). Not retry-worthy - see
+  // §Phase 13.1 Part 10/11 - org-aware routing (primary vs. canary,
+  // policy-checked against whichever was actually selected) replaces the
+  // old separate getEmbeddingProvider() + enforceOrganizationAiPolicy()
+  // calls. Not retry-worthy when policy-refused - see
   // EMBEDDING_ERROR_CODES.AI_POLICY_DISABLED's own docstring.
+  let provider;
+  let group: "primary" | "canary";
   try {
-    await enforceOrganizationAiPolicy(clause.organizationId, provider.providerName);
+    const aiContext = await loadOrganizationAiContext(clause.organizationId);
+    const selection = getEmbeddingProviderForOrganization({ organizationId: clause.organizationId, ...aiContext });
+    provider = selection.provider;
+    group = selection.group;
   } catch (policyError) {
     if (policyError instanceof AiDisabledError || policyError instanceof ExternalAiProcessingDisabledError) {
       await failJob(job.id, EMBEDDING_ERROR_CODES.AI_POLICY_DISABLED, policyError.message);
@@ -94,7 +98,7 @@ async function runClaimedJob(job: EmbeddingJobRow): Promise<void> {
   }
   const reservation = budgetOutcome.reservation;
 
-  const aiConfig = getAiRuntimeConfiguration();
+  const aiConfig = getAiRuntimeConfiguration({ embeddingProvider: provider });
   const jobStart = performance.now();
 
   try {
@@ -149,6 +153,7 @@ async function runClaimedJob(job: EmbeddingJobRow): Promise<void> {
       currency: actualCost.currency,
       latencyMs: Math.round(performance.now() - jobStart),
       success: true,
+      canaryUsed: group === "canary",
       aiConfigVersion: aiConfig.version,
       aiConfigChecksum: aiConfig.checksum,
     });
@@ -162,6 +167,7 @@ async function runClaimedJob(job: EmbeddingJobRow): Promise<void> {
       latencyMs: Math.round(performance.now() - jobStart),
       success: false,
       errorCode: EMBEDDING_ERROR_CODES.PROVIDER_ERROR,
+      canaryUsed: group === "canary",
       aiConfigVersion: aiConfig.version,
       aiConfigChecksum: aiConfig.checksum,
     });

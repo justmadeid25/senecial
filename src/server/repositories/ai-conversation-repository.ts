@@ -63,6 +63,8 @@ export interface AddMessageProvenanceData {
   vectorSearchProvider: string;
   promptTemplateVersion: string;
   citationValidatorVersion: string;
+  /** §Phase 13.1 Part 11 - undefined when no completion was actually generated (guard short-circuit) - see AskQuestionStreamEvent's "done" variant. */
+  canaryUsed?: boolean;
 }
 
 export interface AddMessageData {
@@ -89,6 +91,7 @@ export async function addMessage(data: AddMessageData): Promise<MessageWithCitat
         vectorSearchProvider: data.provenance?.vectorSearchProvider,
         promptTemplateVersion: data.provenance?.promptTemplateVersion,
         citationValidatorVersion: data.provenance?.citationValidatorVersion,
+        canaryUsed: data.provenance?.canaryUsed,
         citations: data.citations?.length
           ? {
               create: data.citations.map((citation) => ({

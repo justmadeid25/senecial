@@ -21,6 +21,8 @@ export interface RecordAiUsageData {
   success: boolean;
   errorCode?: string | null;
   fallbackUsed?: boolean;
+  /** §Phase 13.1 Part 11 - see AiUsageRecord.canaryUsed's schema docstring for the "never both true" invariant with fallbackUsed. */
+  canaryUsed?: boolean;
   aiConfigVersion: string;
   aiConfigChecksum: string;
 }
@@ -52,6 +54,7 @@ export async function recordAiUsage(data: RecordAiUsageData, client: DbClient = 
       success: data.success,
       errorCode: data.errorCode ?? undefined,
       fallbackUsed: data.fallbackUsed ?? false,
+      canaryUsed: data.canaryUsed ?? false,
       aiConfigVersion: data.aiConfigVersion,
       aiConfigChecksum: data.aiConfigChecksum,
     },
@@ -124,6 +127,7 @@ export interface AiUsageBreakdownRow {
   estimatedCostMinor: bigint;
   failureCount: number;
   fallbackCount: number;
+  canaryCount: number;
   avgLatencyMs: number;
 }
 
@@ -157,6 +161,9 @@ export async function getOrganizationUsageBreakdown(filter: AiUsageFilter, clien
     const fallbackCount = await client.aiUsageRecord.count({
       where: { ...where, provider: group.provider, model: group.model, fallbackUsed: true },
     });
+    const canaryCount = await client.aiUsageRecord.count({
+      where: { ...where, provider: group.provider, model: group.model, canaryUsed: true },
+    });
     rows.push({
       provider: group.provider,
       model: group.model,
@@ -168,6 +175,7 @@ export async function getOrganizationUsageBreakdown(filter: AiUsageFilter, clien
       estimatedCostMinor: group._sum.estimatedCostMinor ?? BigInt(0),
       failureCount,
       fallbackCount,
+      canaryCount,
       avgLatencyMs: group._count._all > 0 ? Math.round((group._sum.latencyMs ?? 0) / group._count._all) : 0,
     });
   }

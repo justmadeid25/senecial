@@ -69,13 +69,15 @@ next-env.d.ts
 /.minio-data
 
 # Phase 12 - AI evaluation CLI (`pnpm ai:evaluate`) output - regenerated
-# each run, never a committed artifact. Phase 13 §45 exception:
-# ai-cost-baseline.json IS committed (needed across CI runs by
-# scripts/ai-cost-regression-check.ts) - the /reports/* + negation form
+# each run, never a committed artifact. Phase 13 §45 / Phase 13.1 §14
+# exception: ai-cost-baseline.json and ai-production-quality-baseline.json
+# ARE committed (needed across CI runs by scripts/ai-cost-regression-check.ts
+# and as the recorded production baseline) - the /reports/* + negation form
 # (rather than a bare /reports directory-ignore) is required for git to
-# actually re-include a single file inside an otherwise-ignored directory.
+# actually re-include specific files inside an otherwise-ignored directory.
 /reports/*
 !/reports/ai-cost-baseline.json
+!/reports/ai-production-quality-baseline.json
 
 # Phase 12.2 - per-run E2E storage isolation (tmp/e2e-storage/<run-id>) and
 # any other scratch output - regenerated per run, never committed.

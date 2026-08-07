@@ -1,5 +1,6 @@
 import { AI_CACHE_TTL_SECONDS } from "@/lib/config/ai-cache";
 import { hashCacheInput } from "@/domain/ai/cache-key";
+import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
 import { mergeScores, rerank } from "@/domain/ai/hybrid-search-scoring";
 import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
 import { DEFAULT_TOP_K } from "@/domain/ai/retrieval-config";
@@ -59,8 +60,10 @@ interface CachedRetrieval {
  * regardless of anything else changing - no checksum needed, just a TTL
  * (see lib/config/ai-cache.ts).
  */
-async function getCachedQueryEmbedding(normalizedQuestion: string): Promise<{ vector: number[]; dimension: number }> {
-  const embeddingProvider = getEmbeddingProvider();
+async function getCachedQueryEmbedding(
+  normalizedQuestion: string,
+  embeddingProvider: EmbeddingProvider
+): Promise<{ vector: number[]; dimension: number }> {
   const cache = getCacheProvider();
   const cacheKey = `embedding:${embeddingProvider.providerName}:${embeddingProvider.modelName}:${hashCacheInput(normalizedQuestion)}`;
 
@@ -99,8 +102,9 @@ async function hybridSearchClausesUncached(params: {
   organizationId: string;
   question: string;
   topK: number;
+  embeddingProvider: EmbeddingProvider;
 }): Promise<HybridSearchResultItem[]> {
-  const { organizationId, question, topK } = params;
+  const { organizationId, question, topK, embeddingProvider } = params;
   const normalizedQuestion = normalizeClauseText(question);
   const keywords = extractKeywords(question);
 
@@ -119,8 +123,7 @@ async function hybridSearchClausesUncached(params: {
   // pgvector provider by default (application cosine as the explicit
   // fallback - see search-clause-vectors.ts's fallback policy), instead of
   // loading every organization embedding into this process.
-  const queryEmbedding = await getCachedQueryEmbedding(normalizedQuestion);
-  const embeddingProvider = getEmbeddingProvider();
+  const queryEmbedding = await getCachedQueryEmbedding(normalizedQuestion, embeddingProvider);
   const vectorCandidates = await searchClauseVectors({
     organizationId,
     queryVector: queryEmbedding.vector,
@@ -223,10 +226,12 @@ export async function hybridSearchClauses(params: {
   organizationId: string;
   question: string;
   topK?: number;
+  /** §Phase 13.1 Part 10 - the org-routed embedding provider (see get-embedding-provider-for-organization.ts). Defaults to the primary singleton for callers that haven't been updated for org-aware routing yet (the evaluation CLI, tests). */
+  embeddingProvider?: EmbeddingProvider;
 }): Promise<HybridSearchResultItem[]> {
   const topK = params.topK ?? DEFAULT_TOP_K;
   const cache = getCacheProvider();
-  const embeddingProvider = getEmbeddingProvider();
+  const embeddingProvider = params.embeddingProvider ?? getEmbeddingProvider();
   const vectorSearchProvider = getClauseVectorSearchProvider();
   const cacheKey = buildRetrievalCacheKey({
     vectorSearchProviderName: vectorSearchProvider.providerName,
@@ -263,7 +268,12 @@ export async function hybridSearchClauses(params: {
       }
     }
 
-    const results = await hybridSearchClausesUncached({ organizationId: params.organizationId, question: params.question, topK });
+    const results = await hybridSearchClausesUncached({
+      organizationId: params.organizationId,
+      question: params.question,
+      topK,
+      embeddingProvider,
+    });
 
     const toCache: CachedRetrieval = { embeddingChecksum: currentChecksum, results };
     await cache.set(cacheKey, JSON.stringify(toCache), AI_CACHE_TTL_SECONDS.retrieval);

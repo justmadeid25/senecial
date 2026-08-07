@@ -14,6 +14,7 @@ import {
   SEARCH_WEIGHT_VERSION,
   VECTOR_WEIGHT,
 } from "@/domain/ai/hybrid-search-scoring";
+import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
 import { PROMPT_TEMPLATE_VERSION } from "@/domain/ai/prompt-builder";
 import { DEFAULT_TOP_K } from "@/domain/ai/retrieval-config";
 import { EMBEDDING_PIPELINE_VERSION } from "@/domain/ai/vector-search-config";
@@ -35,9 +36,15 @@ export interface AiRuntimeConfigurationWithChecksum extends AiRuntimeConfigurati
  * domain/ai modules stay pure/provider-agnostic by convention (see e.g.
  * hybrid-search-scoring.ts's own docstring on why it never touches a
  * provider or the DB directly).
+ *
+ * §Phase 13.1 Part 10/11 - `overrides.embeddingProvider` lets a
+ * canary-routed request stamp provenance with the provider that ACTUALLY
+ * served it (see get-embedding-provider-for-organization.ts), rather than
+ * always reporting the primary singleton's identity regardless of which
+ * provider ran.
  */
-export function getAiRuntimeConfiguration(): AiRuntimeConfigurationWithChecksum {
-  const embeddingProvider = getEmbeddingProvider();
+export function getAiRuntimeConfiguration(overrides?: { embeddingProvider?: EmbeddingProvider }): AiRuntimeConfigurationWithChecksum {
+  const embeddingProvider = overrides?.embeddingProvider ?? getEmbeddingProvider();
   const vectorSearchProvider = getClauseVectorSearchProvider();
 
   const config: AiRuntimeConfiguration = {

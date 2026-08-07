@@ -180,11 +180,67 @@ pgvector 컬럼은 고정 폭(`vector(256)`, `VECTOR_NATIVE_DIMENSION` - 현재 
 
 `senecial_ai_provider_requests_total{provider,operation}`, `senecial_ai_provider_errors_total{provider,operation}`, `senecial_ai_provider_errors_by_code_total{provider,operation,error_code}`, `senecial_ai_provider_latency_ms{provider_operation}`, `senecial_ai_provider_fallback_total`, `senecial_ai_circuit_state{provider}`(gauge, 0/1/2), `senecial_ai_budget_rejections_total`, `senecial_ai_estimated_cost_minor_total`, `senecial_ai_shadow_evaluation_*`. organizationId는 이번에도 라벨에 포함하지 않습니다.
 
-## 남아 있는 문제 (정직하게 명시)
+## 남아 있는 문제 (Phase 13, Phase 13.1에서 해결된 항목은 아래 절 참고)
 
 - 실제 provider(OpenAI 등) credential이 이 세션 환경에 없어 embedding/LLM/streaming/circuit-breaker/fallback의 **실 네트워크 동작**은 검증되지 않았습니다. 코드는 완전하며 unit 테스트(fetch mock)로 파싱/검증 로직은 커버했지만, 실제 API 응답 형태와 100% 일치한다는 보장은 실행 전까지 없습니다.
 - Shadow mode는 코드/설정/지표까지 구현되었지만 기본값 OFF이며 실제 sampled 호출이 이 세션에서 실행된 적은 없습니다.
-- `reports/ai-cost-baseline.json`은 최초 `pnpm ai:evaluate:provider --execute` 실행 시점에 생성됩니다 - 이 세션에는 아직 생성되지 않았습니다(커밋된 베이스라인 없음).
-- Canary 배정 함수는 순수하고 테스트되어 있지만, 실제 요청 라우팅에 canary 비율을 적용하는 호출부(예: organization별 provider 선택)는 이번 Phase에서 연결하지 않았습니다 - 배정 로직만 제공되며, 실제 canary rollout을 수행하려면 `getEmbeddingProvider()`/`getLlmProvider()` 팩토리 호출부에서 `isOrganizationInCanary()` 결과에 따라 provider를 분기하는 조직-인지형 팩토리로 확장해야 합니다(현재 팩토리는 프로세스 전역 singleton이라 조직별로 다른 provider를 반환하지 못합니다 - 이 구조 변경은 범위 밖으로 남겨둡니다).
+- ~~Canary 배정 함수는 순수하고 테스트되어 있지만, 실제 요청 라우팅에 연결되지 않았습니다~~ - **Phase 13.1에서 해결** (organization-aware routing, 아래 절 참고).
+
+---
+
+# Phase 13.1 - OpenAI 실제 Provider 검증·차원 평가·Canary Routing 완성
+
+## 실행 상태 (매우 중요)
+
+**이 세션 환경에는 실제 OpenAI credential(`TEST_OPENAI_API_KEY`/`AI_EMBEDDING_API_KEY`/`AI_LLM_API_KEY`)이 없습니다.** §1의 승인 순서(`dry-run → 비용 추정 → 사용자 보고 → 명시적 승인 → --execute`)에 따라 이번 Phase에서는 **`--dry-run`/`--estimate-cost` 경로만 실행**했고, 실제 유료 API 호출(`--execute`)은 전혀 수행하지 않았습니다. 아래 문서화된 모든 실제-네트워크 관련 항목(실제 embedding 호출, 실제 streaming, 실제 429/5xx 대응, dimension별 실측 품질, production/cost baseline 생성)은 **코드/CLI/CI는 완성되어 있으나 미실행** 상태입니다 - 자세한 내용은 이 절 끝의 "남아 있는 문제"를 참고하십시오.
+
+## Organization-Aware Provider Routing (§10)
+
+기존 `getEmbeddingProvider()`/`getLlmProvider()`(process-global singleton)는 그대로 "primary" provider 팩토리로 유지하고, 그 위에 조직-인지형 계층을 추가했습니다.
+
+- `domain/ai/rollout-configuration.ts` - `AI_CANARY_ENABLED`/`AI_CANARY_PERCENTAGE`/`AI_CANARY_EMBEDDING_PROVIDER`/`AI_CANARY_EMBEDDING_MODEL`/`AI_CANARY_LLM_PROVIDER`/`AI_CANARY_LLM_MODEL` (기본값: canary 비활성).
+- `domain/ai/provider-routing.ts`의 `selectProviderGroup()` - embedding과 LLM 모두 **동일한 조직 hash 버킷**을 사용해 "primary"/"canary"를 결정하는 단일 순수 함수 (동일 조직이 embedding은 canary, LLM은 primary인 우연을 방지).
+- `server/services/ai/get-embedding-provider-for-organization.ts` / `get-llm-provider-for-organization.ts` - `{organizationId, aiPolicy, rolloutConfiguration}`을 받아 routing 결정 + `assertOrganizationAiPolicy()`(실제 선택된 provider 기준)를 **하나로 통합**. `{provider, group}`을 반환해 호출부가 "실제 어떤 provider가 쓰였는지" 항상 알 수 있습니다.
+- `server/services/ai/get-canary-embedding-provider.ts` / `get-canary-llm-provider.ts` - canary 전용 env 네임스페이스(`AI_CANARY_*`)로 구성된 별도 singleton. `AI_CANARY_EMBEDDING_PROVIDER`/`AI_CANARY_LLM_PROVIDER`가 비어 있으면 `null` 반환 - routing이 자동으로 "primary"만 선택합니다.
+- **Retrieval까지 실제로 연결**: `hybridSearchClauses()`/`retrieveContext()`가 `embeddingProvider`를 선택적 파라미터로 받도록 확장되어, org-routed embedding provider가 쿼리 임베딩 생성·pgvector 필터·retrieval cache key 전체에 실제로 반영됩니다(기존 evaluation CLI 등은 인자를 생략하면 primary로 fallback - 하위 호환).
+- **Provenance/Usage 정확성**: `getAiRuntimeConfiguration()`이 `embeddingProvider` override를 받도록 확장되어 canary-routed 요청의 provenance가 primary singleton을 잘못 보고하지 않습니다. `AiUsageRecord.canaryUsed`/`Message.canaryUsed` 컬럼(migration `canary_provenance`)이 `fallbackUsed`와 **명확히 구분**되어 기록됩니다(같은 행에서 절대 동시에 true가 되지 않음 - canary와 failover는 서로 다른 routing 결정).
+- `ask-question.ts`(`askQuestion`/`askQuestionStreaming`)와 `process-embedding-job.ts` 모두 이 새 org-aware 팩토리로 전환되었습니다.
+
+## Canary 테스트 (§11)
+
+`tests/unit/provider-routing.test.ts`(순수 함수, 0%/5%/25%/50%/100%/안정성/분포/embedding-LLM 버킷 일치) + `tests/unit/organization-aware-provider-factories.test.ts`(실제 팩토리 함수 - canary가 진짜 다른 provider 인스턴스를 반환하는지, 정책 비허용 조직은 절대 provider를 받지 못하는지). Fallback과 canary는 서로 다른 메커니즘으로 완전히 분리되어 있습니다 - canary provider에는 failover 래핑을 적용하지 않습니다(단순함 우선 - canary 자체가 실패하면 일반 provider 실패로 처리).
+
+## Data Governance (§3)
+
+- **`store: false`** - `OpenAiResponsesLlmProvider`가 매 요청(streaming 포함)마다 명시적으로 전송합니다(API 기본값에 의존하지 않음) - `tests/unit/openai-responses-llm-provider.test.ts`로 검증. Hosted file/vector store, `tools`, `background` 모드는 이 코드베이스가 전혀 참조하지 않습니다(요청 body에 절대 등장하지 않음, 같은 테스트로 확인).
+- **Zero Data Retention (ZDR)**: **승인되지 않았습니다.** 이 애플리케이션은 OpenAI와 별도의 ZDR 계약을 맺지 않은 상태입니다 - `store:false`는 ZDR과 다른, API 레벨의 opt-out일 뿐입니다. ZDR을 사용 중이라고 표현하는 UI/문서/로그 문구는 존재하지 않으며, 앞으로도 실제 계약 체결 전에는 추가하지 마십시오.
+- **Modified Abuse Monitoring**: 미신청. 기본(변경되지 않은) OpenAI abuse monitoring 정책이 적용됩니다.
+- **기본 API 보존 정책**: `store:false`를 설정해도 OpenAI의 표준 약관에 따른 단기 안전/남용 모니터링 보존이 적용될 수 있습니다(OpenAI 자체 정책 문서 참고 - 이 앱이 통제할 수 있는 범위 밖) - 이 앱이 실제로 보장하는 것은 "요청에 store:false를 보낸다"는 사실 그 자체이며, provider 측 보존 정책의 전체 내용까지 보장한다고 표현하지 않습니다.
+- 전송 데이터: 실제 계약 조항 원문이 아니라, 이미 `retrieveContext()`/hybrid search로 선별된 최소 근거 조항(citation evidence, `evidenceText`는 500자 상한)과 질문 텍스트만 전송됩니다 - 계약 파일 전체나 조직의 다른 계약 데이터는 전송되지 않습니다(§28 기존 정책, 변경 없음).
+
+## Dimension 비교 하네스 (§5/§6) - 코드 완성, 실측 미실행
+
+- `AI_EMBEDDING_DIMENSION=default` - `dimensions` 파라미터를 아예 보내지 않고 모델의 네이티브 차원(`OPENAI_EMBEDDING_NATIVE_DIMENSIONS`, 예: text-embedding-3-small=1536)을 그대로 사용합니다. 256/512/default 모두 동일한 golden dataset으로 비교 가능 - 다른 dimension은 기존 `vector` Float[] application-cosine fallback 경로를 그대로 사용하므로(§8 문서 원문 정책) **production schema를 전혀 변경하지 않고** 비교할 수 있습니다.
+- `domain/ai/dimension-selection-policy.ts` - §6의 선택 기준(Recall/Hit Rate = baseline, Citation 100%, Hallucination 0%, False Refusal ≤5%, MRR/NDCG 감소 ≤0.03)을 코드화한 순수 함수, synthetic report로 unit 테스트됨.
+- `pnpm ai:evaluate:provider --dimension=256|512|1536|default --estimate-cost` - dimension별 비용 예상.
+- **미실행**: 256/512/default 각각의 실제 Recall/Precision/MRR/NDCG/latency 실측치는 credential이 없어 생성되지 않았습니다 - production dimension은 여전히 **256(기본값, 전략 C)**을 유지합니다. 실측 없이 다른 dimension으로 전환하지 않았습니다.
+
+## Production/Cost Baseline (§14/§15) - 코드 완성, 파일 미생성
+
+- `pnpm ai:evaluate:provider --execute` 성공 시 `reports/ai-production-quality-baseline.json`을 함께 생성합니다(질문/응답 원문, API key, 조항 원문, provider request ID 전체 제외 - provider/model/dimension/dataset version/AI config checksum/품질 지표/latency/token/예상 비용/generatedAt만 포함).
+- `pnpm ai:cost-regression --gate` - baseline이 없으면 **성공으로 처리하지 않고 실패**합니다(기존 동작은 자동 생성 후 성공 처리 - `--gate` 플래그로만 엄격화, 하위 호환 유지).
+- **미실행**: 이 세션에는 `reports/ai-cost-baseline.json`도 `reports/ai-production-quality-baseline.json`도 존재하지 않습니다 - 최초 실행은 실제 credential 승인 후 운영자/CI가 수행해야 합니다.
+
+## CI (§16)
+
+`ai-provider-contract-tests`/`ai-production-quality-gate`/`ai-cost-regression` job이 `ai-provider-testing`이라는 **전용** GitHub protected environment를 참조하도록 변경했습니다(기존 `real-infra-tests`는 Postmark/S3/Redis 전용으로 유지). **GitHub 저장소 설정에서 이 environment와 `TEST_OPENAI_API_KEY`/`OPENAI_API_KEY` secret을 실제로 생성하는 작업은 저장소 관리자 권한이 필요하며 이 세션에서 수행할 수 없습니다** - 사용자가 직접 GitHub Settings → Environments에서 생성하고, "Required reviewers" 승인을 활성화해야 합니다.
+
+## 남아 있는 문제 (Phase 13.1, 정직하게 명시)
+
+- **실제 OpenAI 호출 전체가 미실행**입니다 (embedding, streaming, abort, 429/5xx 대응, dimension 비교, production/cost baseline 생성, 소규모 backfill) - 이 세션에 credential이 전혀 없었기 때문입니다. `--dry-run`/`--estimate-cost` 경로만 검증했습니다.
+- Dimension 최종 선택(256 유지)은 §6 기준에 따른 **실측 없이** 기존 선택(전략 C)을 유지한 것입니다 - 실측 후 기준 미달이 확인되면 재검토가 필요합니다.
+- `ai-provider-testing` GitHub environment와 관련 secret은 코드/워크플로만 준비되어 있고 실제로 생성되지 않았습니다.
+- Shadow mode 실제 실행은 여전히 하지 않았습니다(기본 OFF 유지, Phase 13과 동일).
+- Anthropic/Gemini/Azure OpenAI/Ollama LLM provider(Phase 13 이전부터 존재)도 여전히 실 네트워크 미검증입니다 - 이번 Phase는 OpenAI에만 집중했습니다.
 
 관련 문서: [monitoring.md](./monitoring.md), [security.md](./security.md), [backup.md](./backup.md)

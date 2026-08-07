@@ -5,6 +5,7 @@ import { hashCacheInput } from "@/domain/ai/cache-key";
 import type { Citation } from "@/domain/ai/citation";
 import { assertEveryParagraphHasCitation, CITATION_VALIDATOR_VERSION } from "@/domain/ai/citation-required";
 import { assertQuestionWithinBudget, truncateToContextBudget } from "@/domain/ai/context-budget";
+import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
 import { checkEvidenceSufficiency, UNKNOWN_ANSWER_TEXT } from "@/domain/ai/hallucination-guard";
 import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
 import type { LlmMessage, LlmProvider } from "@/domain/ai/llm-provider";
@@ -26,9 +27,10 @@ import {
 } from "@/server/monitoring/metrics";
 import { AI_LLM_DEFAULT_MAX_OUTPUT_TOKENS_ESTIMATE } from "@/lib/config/ai-budget";
 import { releaseAiBudget, reserveAiBudget, settleAiBudget } from "@/server/services/ai/budget/reserve-ai-budget";
-import { enforceOrganizationAiPolicy } from "@/server/services/ai/enforce-organization-ai-policy";
 import { getAiRuntimeConfiguration } from "@/server/services/ai/get-ai-runtime-configuration";
-import { getLlmProvider } from "@/server/services/ai/get-llm-provider";
+import { getEmbeddingProviderForOrganization } from "@/server/services/ai/get-embedding-provider-for-organization";
+import { getLlmProviderForOrganization } from "@/server/services/ai/get-llm-provider-for-organization";
+import { loadOrganizationAiContext } from "@/server/services/ai/load-organization-ai-context";
 import { isFallbackLlmProvider } from "@/server/services/ai/providers/fallback-llm-provider";
 import { recordAiUsageBestEffort } from "@/server/services/ai/record-ai-usage-best-effort";
 
@@ -81,9 +83,17 @@ function checkLlmLatencyBudget(durationMs: number, llm: LlmProvider): void {
   }
 }
 
-/** §Phase 13 Part G (§22) - resolved fresh per call (never cached), matching route.ts's own provenance-stamping rationale: an AiUsageRecord must reflect whatever config actually served THIS request. */
-async function currentAiConfigIdentity(): Promise<{ aiConfigVersion: string; aiConfigChecksum: string }> {
-  const config = getAiRuntimeConfiguration();
+/**
+ * §Phase 13 Part G (§22), extended §Phase 13.1 Part 10/11 - resolved fresh
+ * per call (never cached), matching route.ts's own provenance-stamping
+ * rationale: an AiUsageRecord/Message must reflect whatever config
+ * actually served THIS request. `embeddingProvider` is the ACTUALLY-ROUTED
+ * provider (primary or canary - see get-embedding-provider-for-organization.ts),
+ * never a fresh call to the primary singleton factory, so a canary-routed
+ * request's provenance never misreports the primary's identity.
+ */
+async function currentAiConfigIdentity(embeddingProvider: EmbeddingProvider): Promise<{ aiConfigVersion: string; aiConfigChecksum: string }> {
+  const config = getAiRuntimeConfiguration({ embeddingProvider });
   return { aiConfigVersion: config.version, aiConfigChecksum: config.checksum };
 }
 
@@ -153,16 +163,24 @@ export async function askQuestion(params: { organizationId: string; question: st
   assertQuestionWithinBudget(params.question);
   recordAiRequestStart();
   try {
-    const llm = getLlmProvider();
-    // §Phase 13 Part H (§30) - checked before any retrieval/provider work,
-    // using the LLM provider's identity (askQuestion() is only used by the
+    // §Phase 13.1 Part 10/11 - ONE org-context fetch (DB policy + env
+    // rollout config) drives BOTH the embedding and LLM routing decisions,
+    // so an org's canary bucket is resolved identically for its retrieval
+    // leg and its completion leg (askQuestion() is only used by the
     // evaluation CLI - see this function's own docstring - which does not
     // need the per-request budget reservation askQuestionStreaming()
     // applies for real interactive traffic, but still must never send data
-    // to a real provider for a policy-disabled organization).
-    await enforceOrganizationAiPolicy(params.organizationId, llm.providerName);
+    // to a real/canary provider for a policy-disabled organization).
+    const aiContext = await loadOrganizationAiContext(params.organizationId);
+    const embeddingSelection = getEmbeddingProviderForOrganization({ organizationId: params.organizationId, ...aiContext });
+    const llmSelection = getLlmProviderForOrganization({ organizationId: params.organizationId, ...aiContext });
+    const llm = llmSelection.provider;
 
-    const citations = await retrieveContext({ organizationId: params.organizationId, question: params.question });
+    const citations = await retrieveContext({
+      organizationId: params.organizationId,
+      question: params.question,
+      embeddingProvider: embeddingSelection.provider,
+    });
     const guard = checkEvidenceSufficiency(citations);
 
     if (!guard.sufficient) {
@@ -206,7 +224,7 @@ export async function askQuestion(params: { organizationId: string; question: st
             latencyMs: Math.round(performance.now() - llmStart),
             success: false,
             errorCode: error.errorCode,
-            ...(await currentAiConfigIdentity()),
+            ...(await currentAiConfigIdentity(embeddingSelection.provider)),
           });
           throw error;
         }
@@ -240,7 +258,8 @@ export async function askQuestion(params: { organizationId: string; question: st
           latencyMs: Math.round(llmDurationMs),
           success: true,
           fallbackUsed: result.servedByProviderName !== undefined,
-          ...(await currentAiConfigIdentity()),
+          canaryUsed: llmSelection.group === "canary",
+          ...(await currentAiConfigIdentity(embeddingSelection.provider)),
         });
         await cache.set(cacheKey, result.text, AI_CACHE_TTL_SECONDS.prompt);
         return result.text;
@@ -274,7 +293,8 @@ export async function askQuestion(params: { organizationId: string; question: st
 export type AskQuestionStreamEvent =
   | { type: "citations"; citations: Citation[] }
   | { type: "chunk"; text: string }
-  | { type: "done"; fullText: string };
+  /** §Phase 13.1 Part 11 - `canaryUsed` is omitted (not false) when no completion was actually generated (the hallucination guard short-circuited before any provider call) - undefined means "not applicable," never "definitely primary." */
+  | { type: "done"; fullText: string; canaryUsed?: boolean };
 
 /**
  * §Streaming + §Citation Required, together - never in tension: this
@@ -304,16 +324,22 @@ export async function* askQuestionStreaming(params: {
   assertQuestionWithinBudget(params.question);
   recordAiRequestStart();
   try {
-    const llm = getLlmProvider();
-    // §Phase 13 Part H (§30) - checked before ANY provider work (including
-    // the retrieval leg's own embedding call) using the LLM provider's
-    // identity; a real embedding-provider-specific check also runs inside
-    // retrieveContext()/hybridSearchClauses() via getEmbeddingProvider(),
-    // so an organization with the embedding leg allowed but the LLM leg
-    // disallowed is still caught here before any completion is requested.
-    await enforceOrganizationAiPolicy(params.organizationId, llm.providerName);
+    // §Phase 13.1 Part 10/11 - see askQuestion()'s identical comment: one
+    // org-context fetch drives BOTH the embedding leg's and the LLM leg's
+    // routing (primary vs. canary vs. policy-refused), so an organization
+    // with the embedding leg allowed but the LLM leg disallowed (or vice
+    // versa) is still caught before any provider call, and an org in
+    // canary is in canary for both legs consistently.
+    const aiContext = await loadOrganizationAiContext(params.organizationId);
+    const embeddingSelection = getEmbeddingProviderForOrganization({ organizationId: params.organizationId, ...aiContext });
+    const llmSelection = getLlmProviderForOrganization({ organizationId: params.organizationId, ...aiContext });
+    const llm = llmSelection.provider;
 
-    const citations = await retrieveContext({ organizationId: params.organizationId, question: params.question });
+    const citations = await retrieveContext({
+      organizationId: params.organizationId,
+      question: params.question,
+      embeddingProvider: embeddingSelection.provider,
+    });
     const guard = checkEvidenceSufficiency(citations);
 
     if (!guard.sufficient) {
@@ -343,7 +369,12 @@ export async function* askQuestionStreaming(params: {
       recordCacheEvent("prompt", true);
       assertEveryParagraphHasCitation(cached, contextCitations);
       yield { type: "chunk", text: cached };
-      yield { type: "done", fullText: cached };
+      // §Phase 13.1 Part 11 - the cache key already embeds llm.providerName/
+      // modelName (buildPromptCacheKey), so a hit under the CURRENT
+      // selection's key can only ever have been written by that identical
+      // provider identity - canaryUsed reflects the currently-resolved
+      // group, which is guaranteed consistent with whichever call wrote it.
+      yield { type: "done", fullText: cached, canaryUsed: llmSelection.group === "canary" };
       return;
     }
 
@@ -355,7 +386,7 @@ export async function* askQuestionStreaming(params: {
       recordCacheEvent("prompt", true);
       assertEveryParagraphHasCitation(joined, contextCitations);
       yield { type: "chunk", text: joined };
-      yield { type: "done", fullText: joined };
+      yield { type: "done", fullText: joined, canaryUsed: llmSelection.group === "canary" };
       return;
     }
 
@@ -435,7 +466,7 @@ export async function* askQuestionStreaming(params: {
         latencyMs: Math.round(performance.now() - llmStart),
         success: false,
         errorCode: error.errorCode,
-        ...(await currentAiConfigIdentity()),
+        ...(await currentAiConfigIdentity(embeddingSelection.provider)),
       });
       throw rawError;
     }
@@ -481,7 +512,8 @@ export async function* askQuestionStreaming(params: {
       latencyMs: Math.round(llmDurationMs),
       success: true,
       fallbackUsed: servedByProviderName !== undefined,
-      ...(await currentAiConfigIdentity()),
+      canaryUsed: llmSelection.group === "canary",
+      ...(await currentAiConfigIdentity(embeddingSelection.provider)),
     });
 
     await cache.set(cacheKey, fullText, AI_CACHE_TTL_SECONDS.prompt);
@@ -492,7 +524,7 @@ export async function* askQuestionStreaming(params: {
     // failure mode inside it is swallowed rather than propagated here.
     maybeDispatchShadowEvaluation({ organizationId: params.organizationId, messages, contextCitations });
 
-    yield { type: "done", fullText };
+    yield { type: "done", fullText, canaryUsed: llmSelection.group === "canary" };
   } finally {
     recordAiRequestEnd();
   }

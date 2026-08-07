@@ -155,6 +155,11 @@ export async function POST(request: Request) {
                       vectorSearchProvider: aiConfig.vectorSearchProvider,
                       promptTemplateVersion: aiConfig.promptTemplateVersion,
                       citationValidatorVersion: aiConfig.citationValidatorVersion,
+                      // §Phase 13.1 Part 11 - "provenance에 실제 provider 기록" -
+                      // from the stream's own "done" event (ask-question.ts
+                      // resolved this against the actually-routed LLM
+                      // provider, never re-derived here).
+                      canaryUsed: event.canaryUsed,
                     },
                   });
                   enqueueEvent({ type: "done", conversationId: conversation.id, messageId: saved.id });
