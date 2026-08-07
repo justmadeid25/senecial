@@ -2,11 +2,12 @@ import "dotenv/config";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { formatCostMinorAsUsd } from "../src/domain/ai/pricing";
+import { estimateAiCostMinor, formatCostMinorAsUsd } from "../src/domain/ai/pricing";
 import { renderEvaluationReportMarkdown } from "../src/domain/ai/evaluation/evaluation-report-markdown";
 import { evaluateReleaseGate } from "../src/domain/ai/evaluation/release-gate";
 import { estimateProviderEvaluationCost } from "../src/features/ai/server/estimate-provider-evaluation-cost";
 import { runAiEvaluation } from "../src/features/ai/server/run-ai-evaluation";
+import { getDependencyLatencySnapshot, getEmbeddingTokensTotalSnapshot, getLlmTokensTotalSnapshot } from "../src/server/monitoring/metrics";
 import { prisma } from "../src/server/db/client";
 
 const REPORT_PATH = path.join(process.cwd(), "reports", "ai-evaluation-provider-report.md");
@@ -99,19 +100,89 @@ async function main() {
   }
 
   console.log("\n실제 provider로 골든 데이터셋 평가를 실행합니다 (유료 호출 발생)...");
+  const runStart = performance.now();
   const report = await runAiEvaluation();
+  const totalElapsedMs = Math.round(performance.now() - runStart);
   const gate = evaluateReleaseGate(report);
+
+  // §Phase 13.1 (real-provider verification) - REAL numbers, captured from
+  // the in-process metrics accumulator (survives run-ai-evaluation.ts's
+  // own fixture-organization DB cleanup, unlike AiUsageRecord rows written
+  // during the run - see metrics.ts's getDependencyLatencySnapshot()/
+  // getEmbeddingTokensTotalSnapshot()/getLlmTokensTotalSnapshot() own
+  // docstrings). Never the pre-call `estimate` above - that stays a rough
+  // pre-flight guess, this is what actually happened.
+  const actualEmbeddingTokens = getEmbeddingTokensTotalSnapshot();
+  const actualLlmTokens = getLlmTokensTotalSnapshot();
+  const actualEmbeddingCost = estimateAiCostMinor({
+    provider: estimate.embeddingProvider,
+    model: estimate.embeddingModel,
+    embeddingTokens: actualEmbeddingTokens,
+  });
+  const actualLlmCost = estimateAiCostMinor({
+    provider: estimate.llmProvider,
+    model: estimate.llmModel,
+    inputTokens: actualLlmTokens.promptTokens,
+    outputTokens: actualLlmTokens.completionTokens,
+  });
+  const latency = {
+    embedding: getDependencyLatencySnapshot("embedding"),
+    vectorSearch: getDependencyLatencySnapshot("vectorSearch"),
+    llm: getDependencyLatencySnapshot("llm"),
+    totalElapsedMs,
+  };
 
   const markdown = renderEvaluationReportMarkdown(report);
   await mkdir(path.dirname(REPORT_PATH), { recursive: true });
   await writeFile(REPORT_PATH, markdown, "utf8");
-  await writeFile(REPORT_JSON_PATH, JSON.stringify({ report, gate, costEstimate: estimate }, null, 2), "utf8");
+  await writeFile(
+    REPORT_JSON_PATH,
+    JSON.stringify(
+      {
+        report,
+        gate,
+        costEstimate: {
+          ...estimate,
+          estimatedEmbeddingCostMinor: estimate.estimatedEmbeddingCostMinor?.toString() ?? null,
+          estimatedLlmCostMinor: estimate.estimatedLlmCostMinor?.toString() ?? null,
+        },
+        actual: {
+          embeddingTokens: actualEmbeddingTokens,
+          llmPromptTokens: actualLlmTokens.promptTokens,
+          llmCompletionTokens: actualLlmTokens.completionTokens,
+          estimatedCostMinorFromActualTokens: {
+            embedding: actualEmbeddingCost.estimatedCostMinor?.toString() ?? null,
+            llm: actualLlmCost.estimatedCostMinor?.toString() ?? null,
+          },
+          latency,
+        },
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
 
   console.log(`\n평가 완료 - Recall@${report.summary.topK}: ${(report.summary.meanRecall * 100).toFixed(1)}%`);
+  console.log(`Precision@${report.summary.topK}: ${(report.summary.meanPrecision * 100).toFixed(1)}%`);
+  console.log(`MRR: ${report.summary.meanReciprocalRank.toFixed(3)}  NDCG: ${report.summary.meanNdcg.toFixed(3)}`);
   console.log(`Hit Rate@${report.summary.topK}: ${(report.summary.hitRate * 100).toFixed(1)}%`);
   console.log(`Hallucination Rate: ${(report.summary.hallucinationRate * 100).toFixed(1)}%`);
   console.log(`Citation Validity Rate: ${(report.summary.citationValidityRate * 100).toFixed(1)}%`);
   console.log(`False Refusal Rate: ${(report.summary.falseRefusalRate * 100).toFixed(1)}%`);
+  console.log(
+    `Security: cross-org=${report.security.crossOrgLeakageDetected ? "FAIL" : "ok"}, risk-language=${report.security.riskLanguageGuardViolated ? "FAIL" : "ok"}, prompt-injection=${report.security.promptInjectionCompromised ? "FAIL" : "ok"}`
+  );
+  console.log(`\n[실제 사용량] embedding token: ${actualEmbeddingTokens} (${formatCostMinorAsUsd(actualEmbeddingCost.estimatedCostMinor)})`);
+  console.log(
+    `[실제 사용량] LLM token: input ${actualLlmTokens.promptTokens} / output ${actualLlmTokens.completionTokens} (${formatCostMinorAsUsd(actualLlmCost.estimatedCostMinor)})`
+  );
+  console.log(
+    `[실제 latency] embedding avg=${latency.embedding.avgMs.toFixed(0)}ms max=${latency.embedding.maxMs.toFixed(0)}ms (n=${latency.embedding.count}) | ` +
+      `vectorSearch avg=${latency.vectorSearch.avgMs.toFixed(0)}ms (n=${latency.vectorSearch.count}) | ` +
+      `llm avg=${latency.llm.avgMs.toFixed(0)}ms max=${latency.llm.maxMs.toFixed(0)}ms (n=${latency.llm.count})`
+  );
+  console.log(`[전체 소요시간] ${totalElapsedMs}ms`);
   console.log(`\nRelease Gate (baseline: ${gate.baselineUsed}): ${gate.passed ? "PASS" : "FAIL"}`);
   for (const violation of gate.violations) {
     console.log(`  - [${violation.code}] ${violation.message}`);
@@ -140,15 +211,20 @@ async function main() {
       aiConfigChecksum: report.aiConfigChecksum,
       quality: report.summary,
       security: report.security,
-      estimatedTokens: {
-        embedding: estimate.estimatedEmbeddingTokens,
-        llmInput: estimate.estimatedLlmInputTokens,
-        llmOutput: estimate.estimatedLlmOutputTokens,
+      // §Phase 13.1 (real-provider verification) - the RECORDED baseline
+      // uses ACTUAL measured tokens/latency, not the pre-flight estimate
+      // above (which stays in the sibling REPORT_JSON_PATH file for
+      // reference only).
+      actualTokens: {
+        embedding: actualEmbeddingTokens,
+        llmInput: actualLlmTokens.promptTokens,
+        llmOutput: actualLlmTokens.completionTokens,
       },
-      estimatedCostMinor: {
-        embedding: estimate.estimatedEmbeddingCostMinor?.toString() ?? null,
-        llm: estimate.estimatedLlmCostMinor?.toString() ?? null,
+      actualCostMinor: {
+        embedding: actualEmbeddingCost.estimatedCostMinor?.toString() ?? null,
+        llm: actualLlmCost.estimatedCostMinor?.toString() ?? null,
       },
+      latencyMs: latency,
       pricingVersion: estimate.pricingVersion,
       generatedAt: new Date().toISOString(),
     };

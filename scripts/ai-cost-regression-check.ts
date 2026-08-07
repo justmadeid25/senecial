@@ -17,7 +17,8 @@ interface CostBaseline {
 
 interface EvaluationProviderReport {
   costEstimate: { estimatedEmbeddingCostMinor: string | null; estimatedLlmCostMinor: string | null; pricingVersion: string };
-  report: { summary: { totalElapsedMs?: number; questionCount: number } };
+  report: { summary: { questionCount: number } };
+  actual?: { latency?: { totalElapsedMs?: number } };
 }
 
 function toBigIntOrZero(value: string | null): bigint {
@@ -58,7 +59,7 @@ async function main() {
   const current: EvaluationProviderReport = JSON.parse(raw);
   const currentTotalCostMinor =
     toBigIntOrZero(current.costEstimate.estimatedEmbeddingCostMinor) + toBigIntOrZero(current.costEstimate.estimatedLlmCostMinor);
-  const currentLatencyMs = current.report.summary.totalElapsedMs ?? 0;
+  const currentLatencyMs = current.actual?.latency?.totalElapsedMs ?? 0;
 
   const baselineRaw = await readFile(BASELINE_PATH, "utf8").catch(() => null);
   if (!baselineRaw) {

@@ -4,6 +4,7 @@ import { classifyProviderHttpStatus, PROVIDER_ERROR_CODES, ProviderError } from 
 import type { RetryPolicyConfig } from "@/domain/ai/retry-policy";
 
 import { executeWithResilience } from "./execute-with-resilience";
+import { attachStreamAbortGuard } from "./stream-abort-guard";
 
 interface OpenAiCompatibleProviderConfig {
   baseUrl: string;
@@ -151,11 +152,15 @@ export class OpenAiCompatibleLlmProvider implements LlmProvider {
     let inputTokens = 0;
     let outputTokens = 0;
     let providerRequestId: string | undefined;
+    const abortGuard = attachStreamAbortGuard(reader, options?.abortSignal, this.providerName);
 
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          abortGuard.checkAborted();
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
 
         const lines = buffer.split("\n");
@@ -187,7 +192,10 @@ export class OpenAiCompatibleLlmProvider implements LlmProvider {
         }
       }
     } catch (streamError) {
+      if (streamError instanceof ProviderError) throw streamError;
       throw new ProviderError({ errorCode: PROVIDER_ERROR_CODES.PROVIDER_ABORTED, providerName: this.providerName, cause: streamError });
+    } finally {
+      abortGuard.cleanup();
     }
 
     yield { type: "usage", inputTokens, outputTokens };
