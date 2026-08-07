@@ -1,6 +1,9 @@
 name: CI
 
-# Phase 10C Part D - runs on every PR and every push to main. Postgres/Redis/
+# Phase 10C Part D - runs on every PR and every push to master (this
+# repository's actual default branch - §Phase 13.2, fixed after this
+# trigger referenced a nonexistent "main" branch and so never fired on
+# push at all, only via pull_request). Postgres/Redis/
 # MinIO run as GitHub-hosted service containers (§17/§18) - no external
 # network access and no real Postmark/S3 credentials are required for this
 # workflow, so it runs identically on a fork PR with no repository secrets.
@@ -10,7 +13,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [master]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

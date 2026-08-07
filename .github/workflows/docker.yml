@@ -1,14 +1,16 @@
 name: Docker build and push
 
 # Phase 10C §22 - builds and pushes the production image on every merge to
-# main, tagged with the immutable git commit SHA (never `latest` alone -
+# master (this repository's actual default branch - §Phase 13.2, fixed
+# after this trigger referenced a nonexistent "main" branch and so never
+# fired), tagged with the immutable git commit SHA (never `latest` alone -
 # §22's "latest만으로 배포하지 마십시오"). `staging` is a movable pointer tag
 # only, re-pointed at the newest SHA each run - staging-deploy.yml always
 # deploys by SHA, never by resolving `staging` itself, so a deploy's actual
 # target is never ambiguous.
 on:
   push:
-    branches: [main]
+    branches: [master]
   workflow_dispatch: {}
 
 concurrency:
