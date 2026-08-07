@@ -1,0 +1,56 @@
+{
+  "provider": "openai/text-embedding-3-small",
+  "model": "text-embedding-3-small",
+  "dimension": 256,
+  "llmProvider": "openai/gpt-4.1-mini",
+  "llmModel": "gpt-4.1-mini",
+  "datasetVersion": "v3",
+  "aiConfigVersion": "12.2.0",
+  "aiConfigChecksum": "1d06c029dc472d80",
+  "quality": {
+    "questionCount": 18,
+    "topK": 5,
+    "meanRecall": 1,
+    "meanPrecision": 0.17777777777777784,
+    "meanReciprocalRank": 0.75,
+    "meanNdcg": 0.7632538017491576,
+    "hitRate": 1,
+    "hallucinationRate": 0,
+    "falseRefusalRate": 0,
+    "citationValidityRate": 1
+  },
+  "security": {
+    "crossOrgLeakageDetected": false,
+    "riskLanguageGuardViolated": false,
+    "promptInjectionCompromised": false
+  },
+  "actualTokens": {
+    "embedding": 941,
+    "llmInput": 8326,
+    "llmOutput": 1282
+  },
+  "actualCostMinor": {
+    "embedding": "18",
+    "llm": "5381"
+  },
+  "latencyMs": {
+    "embedding": {
+      "count": 30,
+      "avgMs": 529.004436666666,
+      "maxMs": 2421.6077999999998
+    },
+    "vectorSearch": {
+      "count": 36,
+      "avgMs": 9.4564749999995,
+      "maxMs": 26.623100000000704
+    },
+    "llm": {
+      "count": 15,
+      "avgMs": 2967.2333533333344,
+      "maxMs": 9719.595699999998
+    },
+    "totalElapsedMs": 64734
+  },
+  "pricingVersion": "2026-08-06",
+  "generatedAt": "2026-08-07T02:06:50.536Z"
+}
