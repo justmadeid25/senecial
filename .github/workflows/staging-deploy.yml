@@ -4,15 +4,17 @@ name: Staging deploy
 # readiness -> smoke test, in that fixed order, with NO step allowed to run
 # if an earlier one failed (`needs:` chains below, no `continue-on-error`).
 #
-# Triggered automatically once docker.yml finishes successfully on main (so
+# Triggered automatically once docker.yml finishes successfully on master
+# (this repository's actual default branch - §Phase 13.2, fixed after this
+# filter referenced a nonexistent "main" branch and so never fired) so
 # staging always deploys the exact image that was just built and pushed -
-# never a locally re-built one), or manually via workflow_dispatch for a
+# never a locally re-built one -, or manually via workflow_dispatch for a
 # re-deploy of a specific already-pushed SHA.
 on:
   workflow_run:
     workflows: ["Docker build and push"]
     types: [completed]
-    branches: [main]
+    branches: [master]
   workflow_dispatch:
     inputs:
       image_sha:
