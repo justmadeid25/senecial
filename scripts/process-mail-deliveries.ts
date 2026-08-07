@@ -80,4 +80,9 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    // §Phase 13.2 - same fix as scripts/process-embedding-jobs.ts: a
+    // one-shot CLI must never depend on every transitive dependency
+    // (a RATE_LIMITER=redis-driven singleton, in the sibling script's
+    // confirmed case) remembering to close every connection it opens.
+    process.exit(process.exitCode ?? 0);
   });

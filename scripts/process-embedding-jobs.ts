@@ -48,4 +48,16 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    // §Phase 13.2 - a real incident: this CLI hung indefinitely inside CI's
+    // release:verify job (RATE_LIMITER=redis at the job level) after its
+    // own work had already finished. Root cause: processNextEmbeddingJob()
+    // unconditionally reserves AI budget via reserveAiBudget() ->
+    // getAiBudgetCounter(), which reuses RATE_LIMITER (see that function's
+    // own docstring) and opens a real Redis client whenever it's "redis" -
+    // regardless of which embedding PROVIDER is actually configured. Never
+    // explicitly closed, so nothing let this one-shot CLI's event loop
+    // drain naturally. An explicit exit is the standard, robust defense
+    // for a one-shot CLI script - see scripts/ai-evaluate.ts's identical
+    // fix for the same bug class.
+    process.exit(process.exitCode ?? 0);
   });
