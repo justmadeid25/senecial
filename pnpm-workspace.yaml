@@ -31,6 +31,12 @@ overrides:
   # whose exports changed across that major bump.
   'brace-expansion@>=5.0.0 <5.0.9': 5.0.9
   fast-uri: 3.1.5
+  # GHSA-5p4m-2wfm-xmqj (CVE-2026-59870) - quadratic CPU consumption in
+  # !!omap resolution, patched at 4.3.1. Pulled in transitively by
+  # @eslint/eslintrc (eslint chain) and cosmiconfig (via the shadcn CLI) -
+  # both declare a semver range that already permits 4.3.1 on the same
+  # major line, so this is a same-major patch bump, not a major upgrade.
+  js-yaml: 4.3.1
 onlyBuiltDependencies:
   - sharp
   - unrs-resolver
