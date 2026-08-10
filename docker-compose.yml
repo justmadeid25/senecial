@@ -12,13 +12,21 @@
 # honored by a plain `docker compose up` (Compose v2, no Swarm required).
 services:
   postgres:
-    image: postgres:18-alpine
+    # plain postgres:18-alpine cannot run the pgvector_clause_embeddings
+    # migration's `CREATE EXTENSION vector`. Same PostgreSQL major version
+    # as before, just with the extension available (matches ci.yml).
+    image: pgvector/pgvector:pg18
     container_name: senecial-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: senecial
       POSTGRES_USER: senecial
       POSTGRES_PASSWORD: development-only-password
+      # postgres:18+ images refuse to start if the mounted volume's root
+      # isn't empty (e.g. a `lost+found` dir from ext4-formatted Docker
+      # Desktop/WSL2 volumes) - point PGDATA at a subdirectory to avoid
+      # the false-positive "existing data" check. See docker-library/postgres#1259.
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
