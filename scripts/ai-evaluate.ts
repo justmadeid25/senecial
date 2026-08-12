@@ -27,6 +27,7 @@ import type { EvaluationReport } from "../src/domain/ai/evaluation/evaluation-re
 import { evaluateReleaseGate, type ReleaseGateResult } from "../src/domain/ai/evaluation/release-gate";
 import { runAiEvaluation } from "../src/features/ai/server/run-ai-evaluation";
 import { resetClauseVectorSearchProviderCache } from "../src/server/services/ai/vector-search/get-clause-vector-search-provider";
+import { resetDocumentChunkVectorSearchProviderCache } from "../src/server/services/ai/vector-search/get-document-chunk-vector-search-provider";
 import { prisma } from "../src/server/db/client";
 
 const REPORT_PATH = path.join(process.cwd(), "reports", "ai-evaluation-report.md");
@@ -74,6 +75,7 @@ async function runOnce(vectorProvider?: string): Promise<EvaluationComparisonEnt
     process.env.AI_VECTOR_SEARCH_PROVIDER = vectorProvider;
   }
   resetClauseVectorSearchProviderCache();
+  resetDocumentChunkVectorSearchProviderCache();
 
   const start = performance.now();
   const report = await runAiEvaluation();

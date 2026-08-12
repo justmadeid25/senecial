@@ -23,7 +23,9 @@ import { processNextExtractionJob } from "@/features/extraction/server/process-e
 import { processNextClauseSegmentationJob } from "@/features/clauses/server/process-clause-segmentation-job";
 import { uploadContractFile } from "@/features/contract-files/server/upload-contract-file";
 import { processNextEmbeddingJob } from "@/features/ai/server/process-embedding-job";
+import { processNextChunkEmbeddingJob } from "@/features/ai/server/process-document-chunk-embedding-job";
 import { hybridSearchClauses } from "@/features/ai/server/hybrid-search-clauses";
+import { hybridSearchDocumentChunks } from "@/features/ai/server/hybrid-search-document-chunks";
 import { askQuestion } from "@/features/ai/server/ask-question";
 import { getStorageDriver } from "@/server/storage";
 import { getAiRuntimeConfiguration } from "@/server/services/ai/get-ai-runtime-configuration";
@@ -60,6 +62,7 @@ interface DecoyOrganization {
   ownerId: string;
   contractId: string | null;
   clauseIds: string[];
+  chunkIds: string[];
   storageKeys: string[];
 }
 
@@ -135,13 +138,29 @@ async function seedDecoyOrganization(): Promise<DecoyOrganization> {
   });
   await drainUntilEmpty(processNextClauseSegmentationJob, "decoy-segment");
   await drainUntilEmpty(processNextEmbeddingJob, "decoy-embed");
+  // §Phase 14.1 - the decoy org's raw-document chunks must be fully
+  // embedded too, or the chunk retrieval leg's tenant-isolation check
+  // below (retrievedChunkIds vs decoy.chunkIds) would only ever exercise
+  // the keyword leg, never the vector leg's own org-scoping.
+  await drainUntilEmpty(processNextChunkEmbeddingJob, "decoy-chunk-embed");
 
   const clauses = await prisma.contractClause.findMany({
     where: { organizationId: organization.id, contractId: contract.id },
     select: { id: true },
   });
+  const chunks = await prisma.contractDocumentChunk.findMany({
+    where: { organizationId: organization.id, contractId: contract.id },
+    select: { id: true },
+  });
 
-  return { organizationId: organization.id, ownerId: owner.id, contractId, clauseIds: clauses.map((c) => c.id), storageKeys };
+  return {
+    organizationId: organization.id,
+    ownerId: owner.id,
+    contractId,
+    clauseIds: clauses.map((c) => c.id),
+    chunkIds: chunks.map((c) => c.id),
+    storageKeys,
+  };
 }
 
 async function cleanupDecoyOrganization(decoy: DecoyOrganization): Promise<void> {
@@ -150,6 +169,9 @@ async function cleanupDecoyOrganization(decoy: DecoyOrganization): Promise<void>
     await storageDriver.delete(key).catch(() => {});
   }
   if (decoy.contractId) {
+    await prisma.contractDocumentChunkEmbedding.deleteMany({ where: { organizationId: decoy.organizationId } });
+    await prisma.contractDocumentChunkEmbeddingJob.deleteMany({ where: { organizationId: decoy.organizationId } });
+    await prisma.contractDocumentChunk.deleteMany({ where: { contractId: decoy.contractId } });
     await prisma.clauseEmbedding.deleteMany({ where: { organizationId: decoy.organizationId } });
     await prisma.embeddingJob.deleteMany({ where: { organizationId: decoy.organizationId } });
     await prisma.contractClause.deleteMany({ where: { contractId: decoy.contractId } });
@@ -254,6 +276,7 @@ async function runAiEvaluationAgainstPrimaryOrganization(decoy: DecoyOrganizatio
     });
     await drainUntilEmpty(processNextClauseSegmentationJob, "segment");
     await drainUntilEmpty(processNextEmbeddingJob, "embed");
+    await drainUntilEmpty(processNextChunkEmbeddingJob, "chunk-embed");
 
     const clauses = await prisma.contractClause.findMany({
       where: { organizationId: organization.id, contractId: contract.id },
@@ -285,6 +308,20 @@ async function runAiEvaluationAgainstPrimaryOrganization(decoy: DecoyOrganizatio
       // query result, regardless of how similar their text is (they are
       // identical here - see seedDecoyOrganization()'s own docstring).
       if (retrievedIds.some((id) => decoy.clauseIds.includes(id))) {
+        crossOrgLeakageDetected = true;
+      }
+
+      // §Phase 14.1 §21 - same tenant-isolation regression check, extended
+      // to the new raw-document chunk retrieval leg. The decoy org's
+      // chunks are byte-identical text to the primary org's (same golden
+      // dataset) - the toughest possible confusability case for the chunk
+      // vector/keyword legs specifically.
+      const chunkSearchResults = await hybridSearchDocumentChunks({
+        organizationId: organization.id,
+        question: question.question,
+        topK: TOP_K,
+      });
+      if (chunkSearchResults.some((result) => decoy.chunkIds.includes(result.chunkId))) {
         crossOrgLeakageDetected = true;
       }
 
@@ -381,6 +418,9 @@ async function runAiEvaluationAgainstPrimaryOrganization(decoy: DecoyOrganizatio
       await storageDriver.delete(key).catch(() => {});
     }
     if (contractId) {
+      await prisma.contractDocumentChunkEmbedding.deleteMany({ where: { organizationId: organization.id } });
+      await prisma.contractDocumentChunkEmbeddingJob.deleteMany({ where: { organizationId: organization.id } });
+      await prisma.contractDocumentChunk.deleteMany({ where: { contractId } });
       await prisma.clauseEmbedding.deleteMany({ where: { organizationId: organization.id } });
       await prisma.embeddingJob.deleteMany({ where: { organizationId: organization.id } });
       await prisma.contractClause.deleteMany({ where: { contractId } });

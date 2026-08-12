@@ -27,6 +27,14 @@ describe("extractEvidenceSentence (Phase 12 Part C)", () => {
   it("never returns an empty string for non-empty input", () => {
     expect(extractEvidenceSentence("단일 문장", "질문").length).toBeGreaterThan(0);
   });
+
+  it("§Phase 14.1 - never returns text containing a blank-line (paragraph) break, even when the source text glues an unpunctuated heading line to its following body text (the raw-document-chunk shape) - a downstream paragraph split on that break would silently drop a citation marker", () => {
+    const chunkLikeText =
+      "제1조(계약 해지)\n\n어느 일방이 본 계약을 위반한 경우 상대방은 서면 통지로 즉시 계약을 해지할 수 있다.";
+    const evidence = extractEvidenceSentence(chunkLikeText, "계약을 해지하려면 어떻게 해야 하나요?");
+    expect(evidence).not.toMatch(/\n{2,}/);
+    expect(evidence).toContain("해지");
+  });
 });
 
 describe("buildContext (Phase 12 Part C §Context Builder)", () => {

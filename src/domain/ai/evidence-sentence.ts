@@ -45,10 +45,29 @@ function keywordStemScore(sentence: string, keywords: readonly string[]): number
  * actually verifies. Falls back to the clause's first sentence if there
  * is only one sentence (or none) - a citation must never be empty.
  */
+/**
+ * §Phase 14.1 - a returned "evidence sentence" must never itself contain a
+ * blank-line (paragraph) break: downstream, citation-required.ts splits
+ * the FINAL ANSWER TEXT on `\n{2,}` to find one citation marker per
+ * paragraph, and the evidence text is quoted directly inside that
+ * paragraph (see prompt-builder.ts / deterministic-development-llm-provider.ts).
+ * A blank line embedded in the evidence would silently split one citation's
+ * paragraph into two, the first half ending with no marker at all -
+ * exactly the failure this collapses away. This only ever fires for text
+ * `splitSentences()` couldn't cleanly break apart (no `.`/`!`/`?`/`다.`
+ * boundary before a paragraph break) - real, single-sentence clause text
+ * never contains an internal blank line and is unaffected; a raw document
+ * chunk that glues an unpunctuated heading line to its following body text
+ * (§4 chunking) is the concrete case that needs this.
+ */
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 export function extractEvidenceSentence(clauseText: string, question: string): string {
   const sentences = splitSentences(clauseText);
   if (sentences.length <= 1) {
-    return (sentences[0] ?? clauseText).slice(0, MAX_EVIDENCE_LENGTH);
+    return collapseWhitespace((sentences[0] ?? clauseText).slice(0, MAX_EVIDENCE_LENGTH));
   }
 
   const keywords = extractKeywords(question);
@@ -66,5 +85,5 @@ export function extractEvidenceSentence(clauseText: string, question: string): s
     }
   }
 
-  return bestSentence.slice(0, MAX_EVIDENCE_LENGTH);
+  return collapseWhitespace(bestSentence.slice(0, MAX_EVIDENCE_LENGTH));
 }
