@@ -4,12 +4,24 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/**
+ * §Phase 14.3 - Senecial design system. Token NAMES match shadcn's own
+ * convention (--primary, --muted, etc.) so every existing component that
+ * already consumes them via Tailwind utilities (bg-primary, text-muted-
+ * foreground, ...) picks up the new values with zero call-site changes -
+ * only the VALUES changed, from the stock zero-chroma shadcn "neutral"
+ * starter theme to a real brand palette. New semantic tokens (--success,
+ * --warning, --flow-*) were added because those meanings were previously
+ * hardcoded per-page as raw Tailwind palette classes (amber-600, emerald-
+ * 700, ...) in at least 5 different files - the same status color
+ * red-clared independently per page instead of sourced from one place.
+ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-geist-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,6 +51,14 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* Semantic status tokens - replaces hardcoded amber/emerald palette classes scattered per-page. */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  /* "Information flow" accent pair - used ONLY for gradients that represent document->analysis->evidence transformation (hero, processing states), never as page decoration. See §6/§9. */
+  --color-flow-start: var(--flow-start);
+  --color-flow-end: var(--flow-end);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -49,72 +69,93 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Warm off-white base, not pure white - graphite/near-black foreground, not pure black. */
+  --background: oklch(0.9880 0.0030 90);
+  --foreground: oklch(0.1900 0.0100 275);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.1900 0.0100 275);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.1900 0.0100 275);
+  /* Deep, sophisticated blue-violet - the single accent color that carries "trust + intelligence" throughout the product. */
+  --primary: oklch(0.3900 0.1450 264);
+  --primary-foreground: oklch(0.9850 0.0060 264);
+  --secondary: oklch(0.9600 0.0050 90);
+  --secondary-foreground: oklch(0.2600 0.0200 275);
+  --muted: oklch(0.9600 0.0050 90);
+  --muted-foreground: oklch(0.4700 0.0150 270);
+  --accent: oklch(0.9450 0.0180 264);
+  --accent-foreground: oklch(0.3200 0.1200 264);
+  --destructive: oklch(0.5600 0.2100 25);
+  --success: oklch(0.5400 0.1400 155);
+  --success-foreground: oklch(0.9800 0.0200 155);
+  --warning: oklch(0.6600 0.1600 65);
+  --warning-foreground: oklch(0.2200 0.0400 65);
+  --flow-start: oklch(0.6200 0.1600 264);
+  --flow-end: oklch(0.7200 0.1500 195);
+  --border: oklch(0.9000 0.0080 90);
+  --input: oklch(0.8900 0.0080 90);
+  --ring: oklch(0.3900 0.1450 264 / 45%);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.9750 0.0040 90);
+  --sidebar-foreground: oklch(0.1900 0.0100 275);
+  --sidebar-primary: oklch(0.3900 0.1450 264);
+  --sidebar-primary-foreground: oklch(0.9850 0.0060 264);
+  --sidebar-accent: oklch(0.9450 0.0180 264);
+  --sidebar-accent-foreground: oklch(0.3200 0.1200 264);
+  --sidebar-border: oklch(0.9000 0.0080 90);
+  --sidebar-ring: oklch(0.3900 0.1450 264 / 45%);
+
+  /* §11 - motion tokens, three durations + two easings, reused everywhere instead of ad hoc per-component values. */
+  --duration-micro: 150ms;
+  --duration-component: 240ms;
+  --duration-layout: 400ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0.1, 1);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
+  --background: oklch(0.1750 0.0080 275);
+  --foreground: oklch(0.9700 0.0050 90);
+  --card: oklch(0.2200 0.0100 275);
+  --card-foreground: oklch(0.9700 0.0050 90);
+  --popover: oklch(0.2200 0.0100 275);
+  --popover-foreground: oklch(0.9700 0.0050 90);
+  --primary: oklch(0.7200 0.1400 264);
+  --primary-foreground: oklch(0.1600 0.0300 264);
+  --secondary: oklch(0.2700 0.0120 275);
+  --secondary-foreground: oklch(0.9700 0.0050 90);
+  --muted: oklch(0.2700 0.0120 275);
+  --muted-foreground: oklch(0.6800 0.0150 270);
+  --accent: oklch(0.2900 0.0350 264);
+  --accent-foreground: oklch(0.8500 0.0800 264);
+  --destructive: oklch(0.6800 0.1900 25);
+  --success: oklch(0.7000 0.1500 155);
+  --success-foreground: oklch(0.1600 0.0300 155);
+  --warning: oklch(0.7600 0.1500 70);
+  --warning-foreground: oklch(0.1800 0.0300 70);
+  --flow-start: oklch(0.7000 0.1500 264);
+  --flow-end: oklch(0.7800 0.1400 195);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --ring: oklch(0.7200 0.1400 264 / 50%);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar: oklch(0.2000 0.0100 275);
+  --sidebar-foreground: oklch(0.9700 0.0050 90);
+  --sidebar-primary: oklch(0.7200 0.1400 264);
+  --sidebar-primary-foreground: oklch(0.1600 0.0300 264);
+  --sidebar-accent: oklch(0.2900 0.0350 264);
+  --sidebar-accent-foreground: oklch(0.8500 0.0800 264);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: oklch(0.7200 0.1400 264 / 50%);
 }
 
 @layer base {
@@ -126,5 +167,82 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer utilities {
+  /* Editorial hero headline - used only on the landing page, never in the application shell. */
+  .text-hero {
+    font-size: clamp(2.25rem, 1.4rem + 3.6vw, 4.25rem);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+  }
+  /* Tabular alignment for amounts/dates/metadata - §7. */
+  .text-tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* §6/§9 - the ONE gradient allowed to represent information flow (document -> analysis -> evidence), never page decoration. */
+  .bg-flow-gradient {
+    background-image: linear-gradient(135deg, var(--flow-start), var(--flow-end));
+  }
+  .text-flow-gradient {
+    background-image: linear-gradient(135deg, var(--flow-start), var(--flow-end));
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+}
+
+/**
+ * §10 - landing-only ambient background field. GPU-friendly (transform +
+ * opacity only, no repeated blur repaint - the blur is a static filter
+ * applied once, not re-computed per frame), very slow (28s), small
+ * amplitude drift - never competes with foreground content for attention.
+ * Neutralized automatically by the prefers-reduced-motion rule above
+ * (animation-duration -> 0.01ms), no separate override needed.
+ */
+@keyframes landing-ambient-drift {
+  0% {
+    transform: translate(-50%, 0) scale(1);
+  }
+  50% {
+    transform: translate(-50%, 30px) scale(1.05);
+  }
+  100% {
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+.landing-ambient-field {
+  background-image: linear-gradient(135deg, var(--flow-start), var(--flow-end));
+  animation: landing-ambient-drift 28s var(--ease-standard) infinite;
+  will-change: transform;
+}
+
+/* §25 - AI answer loading indicator: a subtle pulse, never a fake "Thinking about..." chain-of-thought. */
+@keyframes ai-thinking-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.ai-thinking-dot {
+  animation: ai-thinking-pulse 1.1s ease-in-out infinite;
+}
+
+/* §12 - reduced motion: ambient/continuous/parallax animation is disabled globally via this one rule rather than per-component checks, so a component author can never forget it. Discrete, purposeful transitions (state change, feedback) are deliberately NOT touched here - only ANIMATION (continuous/ambient) and forced-long transitions are neutralized, matching §12's "정보 자체는 동일하게 전달되어야 합니다" - a fade-in still fades, it just doesn't also drift or loop. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }
