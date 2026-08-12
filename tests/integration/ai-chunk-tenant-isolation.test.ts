@@ -86,8 +86,6 @@ async function seedOrgWithSharedContent(label: string, emailSuffix: string): Pro
     mimeType: DOCX_MIME,
     buffer,
   });
-  const fileRow = await prisma.contractFile.findUniqueOrThrow({ where: { id: uploaded.id } });
-
   await createExtractionJob({
     userId: owner.id,
     organizationId: organization.id,

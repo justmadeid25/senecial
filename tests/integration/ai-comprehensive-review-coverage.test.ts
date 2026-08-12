@@ -228,7 +228,6 @@ describe("§Phase 14.1 §12 - comprehensive review retrieval coverage (real meas
     expect(citations.length).toBeGreaterThan(0);
 
     const coverage = coverageOf(citations.map((c) => c.evidenceText));
-    // eslint-disable-next-line no-console
     console.log(
       `[comprehensive-review-coverage] found ${coverage.found.length}/${RISK_MARKERS.length} ` +
         `(${(coverage.fraction * 100).toFixed(0)}%); missing: ${JSON.stringify(coverage.missing)}`
@@ -254,7 +253,6 @@ describe("§Phase 14.1 §12 - comprehensive review retrieval coverage (real meas
     expect(result.citations.length).toBeGreaterThan(0);
 
     const coverage = coverageOf(result.citations.map((c) => c.evidenceText));
-    // eslint-disable-next-line no-console
     console.log(
       `[comprehensive-review-coverage/askQuestion] found ${coverage.found.length}/${RISK_MARKERS.length} ` +
         `(${(coverage.fraction * 100).toFixed(0)}%); missing: ${JSON.stringify(coverage.missing)}`

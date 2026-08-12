@@ -81,11 +81,16 @@ describe("ai-conversation-repository (Phase 12 Part D §Session, §Security Conv
       citations: [
         {
           contractClauseId: "clause-1",
+          chunkId: null,
           contractId: "contract-1",
           contractTitle: "테스트 계약",
           clauseNumber: "제1조",
           evidenceText: "근거 문장",
           score: 0.87654,
+          sourcePageStart: null,
+          sourcePageEnd: null,
+          chunkStartOffset: null,
+          chunkEndOffset: null,
         },
       ],
     });
@@ -93,6 +98,40 @@ describe("ai-conversation-repository (Phase 12 Part D §Session, §Security Conv
     expect(message.citations).toHaveLength(1);
     expect(message.citations[0]!.contractTitle).toBe("테스트 계약");
     expect(message.citations[0]!.score?.toString()).toBe("0.87654");
+  });
+
+  it("§Phase 14.1 §9 - a CHUNK citation's real provenance (chunkId, page, offsets) round-trips through persistence, never silently dropped", async () => {
+    const conversation = await createConversation({ organizationId: org.id, userId: userA.id });
+    const message = await addMessage({
+      conversationId: conversation.id,
+      organizationId: org.id,
+      role: "ASSISTANT",
+      content: "답변입니다. [출처: 본문 발췌 3 - 테스트 계약]",
+      citations: [
+        {
+          contractClauseId: null,
+          chunkId: "chunk-1",
+          contractId: "contract-1",
+          contractTitle: "테스트 계약",
+          clauseNumber: "본문 발췌 3",
+          evidenceText: "원문에서 발췌한 근거 문장",
+          score: 0.6,
+          sourcePageStart: 2,
+          sourcePageEnd: 2,
+          chunkStartOffset: 120,
+          chunkEndOffset: 260,
+        },
+      ],
+    });
+
+    expect(message.citations).toHaveLength(1);
+    const citation = message.citations[0]!;
+    expect(citation.contractClauseId).toBeNull();
+    expect(citation.chunkId).toBe("chunk-1");
+    expect(citation.sourcePageStart).toBe(2);
+    expect(citation.sourcePageEnd).toBe(2);
+    expect(citation.chunkStartOffset).toBe(120);
+    expect(citation.chunkEndOffset).toBe(260);
   });
 
   it("bumps the conversation's updatedAt when a message is added", async () => {
@@ -155,11 +194,16 @@ describe("ai-conversation-repository (Phase 12 Part D §Session, §Security Conv
       citations: [
         {
           contractClauseId: null,
+          chunkId: null,
           contractId: "contract-1",
           contractTitle: "계약",
           clauseNumber: null,
           evidenceText: "근거",
           score: 0.5,
+          sourcePageStart: null,
+          sourcePageEnd: null,
+          chunkStartOffset: null,
+          chunkEndOffset: null,
         },
       ],
     });

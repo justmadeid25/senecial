@@ -1,4 +1,4 @@
-import type { ChunkCitation, ClauseCitation, Citation } from "./citation";
+import type { ChunkCitation, ClauseCitation } from "./citation";
 import { extractEvidenceSentence } from "./evidence-sentence";
 import { normalizeClauseText } from "@/domain/clauses/normalize-clause-text";
 

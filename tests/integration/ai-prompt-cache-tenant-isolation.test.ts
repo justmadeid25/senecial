@@ -79,8 +79,6 @@ async function seedOrgWithIdenticalContract(label: string, emailSuffix: string):
     mimeType: DOCX_MIME,
     buffer,
   });
-  const fileRow = await prisma.contractFile.findUniqueOrThrow({ where: { id: uploaded.id } });
-
   const extractionJob = await createExtractionJob({
     userId: owner.id,
     organizationId: organization.id,

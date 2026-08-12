@@ -1449,6 +1449,15 @@ model MessageCitation {
   id               String   @id @default(cuid())
   messageId        String
   contractClauseId String?
+  /**
+   * §Phase 14.1 §9 - the raw-document-chunk counterpart to
+   * contractClauseId, same "no FK, permanent historical record" rationale
+   * (see this model's own top-level doc comment). Exactly one of
+   * contractClauseId/chunkId is non-null per row - which one tells a
+   * reader the citation's evidenceType without a separate column, mirroring
+   * domain/ai/citation.ts's ClauseCitation/ChunkCitation tagged union.
+   */
+  chunkId          String?
   contractId       String
   contractTitle    String
   clauseNumber     String?
@@ -1457,6 +1466,11 @@ model MessageCitation {
    */
   evidenceText     String   @db.VarChar(500)
   score            Decimal? @db.Decimal(6, 5)
+  /** §Phase 14.1 §9 - chunk-only provenance, always null for a clause citation. Never estimated/fabricated - null means "not available," exactly like ChunkCitation's own sourcePageStart/sourcePageEnd contract. */
+  sourcePageStart  Int?
+  sourcePageEnd    Int?
+  chunkStartOffset Int?
+  chunkEndOffset   Int?
   createdAt        DateTime @default(now())
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)

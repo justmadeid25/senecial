@@ -140,13 +140,27 @@ export async function POST(request: Request) {
                     organizationId: authContext.organizationId,
                     role: "ASSISTANT",
                     content: event.fullText,
+                    // §Phase 14.1 §9 - persists the FULL real provenance for
+                    // both citation types, never just the clause-shaped
+                    // subset: a ChunkCitation's chunkId/offsets/page are
+                    // real values already computed at retrieval time, not
+                    // fabricated here - carrying them through is what lets
+                    // a reloaded conversation still distinguish "this
+                    // citation came from the raw document, not a
+                    // ContractClause" (see ai-conversation-repository.ts's
+                    // AddMessageCitationData).
                     citations: finalCitations.map((citation) => ({
                       contractClauseId: citation.contractClauseId,
+                      chunkId: citation.evidenceType === "chunk" ? citation.chunkId : null,
                       contractId: citation.contractId,
                       contractTitle: citation.contractTitle,
                       clauseNumber: citation.clauseReference,
                       evidenceText: citation.evidenceText,
                       score: citation.score,
+                      sourcePageStart: citation.evidenceType === "chunk" ? citation.sourcePageStart : null,
+                      sourcePageEnd: citation.evidenceType === "chunk" ? citation.sourcePageEnd : null,
+                      chunkStartOffset: citation.evidenceType === "chunk" ? citation.chunkStartOffset : null,
+                      chunkEndOffset: citation.evidenceType === "chunk" ? citation.chunkEndOffset : null,
                     })),
                     provenance: {
                       aiConfigVersion: aiConfig.version,

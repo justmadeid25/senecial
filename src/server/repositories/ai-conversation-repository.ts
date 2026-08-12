@@ -52,11 +52,17 @@ export async function listMessagesForConversation(
 
 export interface AddMessageCitationData {
   contractClauseId: string | null;
+  /** §Phase 14.1 §9 - null for a clause citation, set for a chunk citation - exactly one of contractClauseId/chunkId is non-null per row (mirrors domain/ai/citation.ts's tagged union). */
+  chunkId: string | null;
   contractId: string;
   contractTitle: string;
   clauseNumber: string | null;
   evidenceText: string;
   score: number;
+  sourcePageStart: number | null;
+  sourcePageEnd: number | null;
+  chunkStartOffset: number | null;
+  chunkEndOffset: number | null;
 }
 
 /** §Phase 12.2 Part C (§22) - only ever set for ASSISTANT messages; see Message model's own doc comment in schema.prisma. */
@@ -100,11 +106,16 @@ export async function addMessage(data: AddMessageData): Promise<MessageWithCitat
           ? {
               create: data.citations.map((citation) => ({
                 contractClauseId: citation.contractClauseId,
+                chunkId: citation.chunkId,
                 contractId: citation.contractId,
                 contractTitle: citation.contractTitle,
                 clauseNumber: citation.clauseNumber,
                 evidenceText: citation.evidenceText,
                 score: new Prisma.Decimal(citation.score.toFixed(5)),
+                sourcePageStart: citation.sourcePageStart,
+                sourcePageEnd: citation.sourcePageEnd,
+                chunkStartOffset: citation.chunkStartOffset,
+                chunkEndOffset: citation.chunkEndOffset,
               })),
             }
           : undefined,
