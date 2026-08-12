@@ -1,5 +1,6 @@
 import { Prisma } from "@/generated/prisma/client";
 import { VECTOR_NATIVE_DIMENSION } from "@/domain/ai/vector-search-config";
+import { latestAuthoritativeExtractedDocumentIdsForOrganization } from "@/server/repositories/ai-retrieval-freshness";
 import { prisma } from "@/server/db/client";
 
 import { setChunkNativeVector } from "./contract-document-chunk-embedding-vector-repository";
@@ -58,12 +59,26 @@ export async function createLatestChunkEmbedding(data: {
   });
 }
 
-/** Same "cheap fingerprint of the current isLatest set" pattern as getLatestEmbeddingGenerationChecksum() (clause-embedding-repository.ts) - used to invalidate a cached raw-retrieval result the instant an organization's chunk-embedding set changes. */
+/**
+ * Same "cheap fingerprint of the current isLatest set" pattern as
+ * getLatestEmbeddingGenerationChecksum() (clause-embedding-repository.ts),
+ * revised §Phase 14.2 to scope by
+ * latestAuthoritativeExtractedDocumentIdsForOrganization() - the exact
+ * same "latest extraction per live contract" set the chunk retrieval
+ * queries themselves filter by, so a contract soft-delete or a
+ * re-extraction (a new document becoming authoritative) always changes
+ * this checksum, immediately invalidating any cached chunk-retrieval
+ * result computed under the prior corpus.
+ */
 export async function getLatestChunkEmbeddingGenerationChecksum(organizationId: string): Promise<string> {
+  const documentIds = await latestAuthoritativeExtractedDocumentIdsForOrganization(organizationId);
+  if (documentIds.length === 0) {
+    return "0:0:0";
+  }
   const aggregate = await prisma.contractDocumentChunkEmbedding.aggregate({
-    where: { organizationId, isLatest: true },
+    where: { organizationId, isLatest: true, chunk: { extractedDocumentId: { in: documentIds } } },
     _count: { _all: true },
     _max: { createdAt: true },
   });
-  return `${aggregate._count._all}:${aggregate._max.createdAt?.getTime() ?? 0}`;
+  return `${aggregate._count._all}:${aggregate._max.createdAt?.getTime() ?? 0}:${documentIds.length}`;
 }
