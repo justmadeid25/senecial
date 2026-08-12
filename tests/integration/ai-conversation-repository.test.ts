@@ -164,9 +164,32 @@ describe("ai-conversation-repository (Phase 12 Part D §Session, §Security Conv
       ],
     });
 
-    const messages = await listMessagesForConversation(conversation.id);
+    const messages = await listMessagesForConversation({
+      organizationId: org.id,
+      userId: userA.id,
+      conversationId: conversation.id,
+    });
     expect(messages.map((m) => m.role)).toEqual(["USER", "ASSISTANT"]);
     expect(messages[1]!.citations).toHaveLength(1);
+  });
+
+  it("§Security Tenant Isolation - listMessagesForConversation never returns another organization's or another user's messages", async () => {
+    const conversation = await createConversation({ organizationId: org.id, userId: userA.id });
+    await addMessage({ conversationId: conversation.id, organizationId: org.id, role: "USER", content: "비밀 질문" });
+
+    const fromOtherOrg = await listMessagesForConversation({
+      organizationId: otherOrg.id,
+      userId: otherOrgUser.id,
+      conversationId: conversation.id,
+    });
+    expect(fromOtherOrg).toEqual([]);
+
+    const fromOtherUserSameOrg = await listMessagesForConversation({
+      organizationId: org.id,
+      userId: userB.id,
+      conversationId: conversation.id,
+    });
+    expect(fromOtherUserSameOrg).toEqual([]);
   });
 
   it("listConversationsForUser only returns that user's own conversations, ordered by most recently active", async () => {

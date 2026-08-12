@@ -35,12 +35,16 @@ export async function listConversationsForUser(
   });
 }
 
+/** Scoped to BOTH organizationId AND userId via the parent Conversation - matches findConversationById()'s "Conversation 조직 격리" invariant. A conversationId from another organization or another user in the same organization returns an empty list rather than that conversation's messages. */
 export async function listMessagesForConversation(
-  conversationId: string,
+  params: { organizationId: string; userId: string; conversationId: string },
   client: DbClient = prisma
 ): Promise<MessageWithCitations[]> {
   return client.message.findMany({
-    where: { conversationId },
+    where: {
+      conversationId: params.conversationId,
+      conversation: { organizationId: params.organizationId, userId: params.userId },
+    },
     orderBy: { createdAt: "asc" },
     include: { citations: true },
   });
