@@ -255,22 +255,58 @@ export async function checkNoPostgresContention(databaseUrl: string): Promise<En
   }
 }
 
+/**
+ * §Phase 14 Part 8 - REAL bug found and fixed here: `wmic` was removed by
+ * default starting Windows 11 24H2 (Microsoft deprecated it in 2024) -
+ * confirmed on this exact host (`wmic` itself, not just this script,
+ * fails with "지정된 파일을 찾을 수 없습니다"/"not recognized"). The
+ * original code treated a wmic EXECUTION failure the same as "leftover
+ * processes found" (a hard FAIL), which meant this check could never
+ * pass at all on a current Windows install, permanently blocking E2E.
+ * Replaced with `Get-CimInstance Win32_Process` via PowerShell - CIM
+ * cmdlets are the actively-maintained, WMI-removal-proof replacement
+ * Microsoft itself recommends. JSON output (not CSV) sidesteps the
+ * original code's fragile comma-split parsing, which broke on any
+ * command line that itself contained a comma.
+ */
+interface Win32ProcessInfo {
+  ProcessId: number;
+  ParentProcessId?: number;
+  CommandLine?: string;
+  Name?: string;
+}
+
+/**
+ * Deliberately fetches EVERY process (no PowerShell-side `-Filter`) and
+ * filters in TypeScript instead - a `-Filter "Name='node.exe'"` value
+ * has to survive being embedded inside an already-double-quoted
+ * `powershell -Command "..."` string, which itself passes through
+ * cmd.exe's OWN quote parsing first (execSync's default shell on
+ * Windows) - that double layer of quote-stripping reliably mangled the
+ * filter clause into a syntactically invalid one in practice. Fetching
+ * everything sidesteps quoting entirely; the process table is small
+ * enough that this costs nothing measurable.
+ */
+function queryWin32Processes(): Win32ProcessInfo[] {
+  const command = `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine,Name | ConvertTo-Json -Compress"`;
+  const output = execSync(command, { encoding: "utf8" }).trim();
+  if (!output) return [];
+  const parsed = JSON.parse(output) as Win32ProcessInfo | Win32ProcessInfo[];
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
 /** §1 - walks the Windows process table's ParentProcessId links from `pid` up to PID 0, returning every ancestor (including `pid` itself). Used to exclude the CURRENT script's own invocation chain (pnpm -> dotenv-cli -> tsx -> this process, or run-e2e-prod.ts -> preflight) from the "leftover process" scan below - those are not leftovers, they are the very run this check is gating. */
 function getAncestorPids(pid: number): Set<number> {
-  let output = "";
+  let processes: Win32ProcessInfo[];
   try {
-    output = execSync("wmic process get ProcessId,ParentProcessId /format:csv", { encoding: "utf8" });
+    processes = queryWin32Processes();
   } catch {
     return new Set([pid]);
   }
   const parentOf = new Map<number, number>();
-  for (const line of output.split("\n")) {
-    const parts = line.trim().split(",");
-    if (parts.length < 3) continue;
-    const parentId = Number(parts[1]);
-    const processId = Number(parts[2]);
-    if (Number.isFinite(parentId) && Number.isFinite(processId)) {
-      parentOf.set(processId, parentId);
+  for (const proc of processes) {
+    if (Number.isFinite(proc.ProcessId) && Number.isFinite(proc.ParentProcessId)) {
+      parentOf.set(proc.ProcessId, proc.ParentProcessId!);
     }
   }
   const ancestors = new Set<number>([pid]);
@@ -284,25 +320,25 @@ function getAncestorPids(pid: number): Set<number> {
   return ancestors;
 }
 
-/** §1 - looks for a node.exe process whose command line matches another `next start`/`next dev`/`playwright`/benchmark/backup invocation still running, which would compete for the same DB/Redis/filesystem. Excludes the current process's own ancestor chain (see getAncestorPids) - without that, this check flags the very orchestrator run (e.g. run-e2e-prod.ts) that invoked it as a "leftover", which is a false positive, not a real finding. Windows-only (uses wmic); returns ok:true with a note on other platforms rather than failing a check it cannot perform. */
+/** §1 - looks for a node.exe process whose command line matches another `next start`/`next dev`/`playwright`/benchmark/backup invocation still running, which would compete for the same DB/Redis/filesystem. Excludes the current process's own ancestor chain (see getAncestorPids) - without that, this check flags the very orchestrator run (e.g. run-e2e-prod.ts) that invoked it as a "leftover", which is a false positive, not a real finding. Windows-only (uses PowerShell CIM cmdlets); returns ok:true with a note on other platforms rather than failing a check it cannot perform. */
 export async function checkNoLeftoverNodeProcesses(excludePid: number): Promise<EnvironmentCheckResult> {
   const name = "이전 Node 프로세스 없음";
   if (process.platform !== "win32") {
     return { name, ok: true, detail: "win32가 아님 - 이 검사는 Windows 전용으로 건너뜀" };
   }
   const ownAncestors = getAncestorPids(process.pid);
-  let output = "";
+  let allProcesses: Win32ProcessInfo[];
   try {
-    output = execSync('wmic process where "name=\'node.exe\'" get ProcessId,CommandLine /format:csv', { encoding: "utf8" });
+    allProcesses = queryWin32Processes();
   } catch (error) {
-    return { name, ok: false, detail: `wmic 실행 실패: ${error instanceof Error ? error.message : error}` };
+    return { name, ok: false, detail: `프로세스 조회 실패: ${error instanceof Error ? error.message : error}` };
   }
+  const processes = allProcesses.filter((proc) => proc.Name?.toLowerCase() === "node.exe");
   const suspicious: string[] = [];
   const patterns = [/next start/i, /next dev/i, /playwright/i, /run-e2e-prod/i, /benchmark-/i, /disaster-recovery-drill/i, /restore-database/i];
-  for (const line of output.split("\n")) {
-    const parts = line.trim().split(",");
-    const pid = Number(parts[parts.length - 1]);
-    const commandLine = parts.slice(1, -1).join(",");
+  for (const proc of processes) {
+    const pid = proc.ProcessId;
+    const commandLine = proc.CommandLine ?? "";
     if (!pid || pid === excludePid || pid === process.pid || ownAncestors.has(pid)) continue;
     if (patterns.some((p) => p.test(commandLine))) {
       suspicious.push(`pid=${pid}: ${commandLine.slice(0, 100)}`);
