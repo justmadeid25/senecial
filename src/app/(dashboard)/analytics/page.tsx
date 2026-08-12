@@ -194,7 +194,7 @@ export default async function AnalyticsPage({
           <CardContent>
             <EmptyState
               icon={BarChart3}
-              title="아직 등록된 계약이 없습니다"
+              title="아직 등록된 계약이 없습니다."
               description="계약을 등록하면 포트폴리오 현황, 만료 예정, 조항 유형 분포 등 분석 결과가 이곳에 표시됩니다."
               action={
                 <Button nativeButton={false} render={<Link href="/contracts/new" />} variant="outline">

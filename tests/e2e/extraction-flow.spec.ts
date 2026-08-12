@@ -186,7 +186,11 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
     await page.goto(reviewUrl);
 
     await expect(page.getByRole("heading", { name: "추출 결과 검토" })).toBeVisible();
-    await expect(page.getByText("mammoth")).toBeVisible();
+    // §Phase 14.3 §32 - was "mammoth" (the raw internal parsing library
+    // name, an implementation detail that used to leak straight into this
+    // screen) - now the real user-facing label for a Word-format source
+    // (see domain/extraction/labels.ts's extractionMethodLabel()).
+    await expect(page.getByText("Word 문서")).toBeVisible();
 
     const contractNumberSection = page
       .locator("div.rounded-lg.border")
