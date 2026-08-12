@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { FileText } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ContractStatusBadge } from "@/features/contracts/components/contract-status-badge";
 import { getContractDashboardStats } from "@/features/contracts/server/get-contract-dashboard-stats";
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
@@ -94,7 +98,16 @@ export default async function DashboardPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           {stats.recentlyUpdated.length === 0 ? (
-            <p className="text-sm text-muted-foreground">등록된 계약이 없습니다.</p>
+            <EmptyState
+              icon={FileText}
+              title="아직 계약서가 없습니다"
+              description="첫 계약서를 업로드하면 조항 분석과 AI 질문을 시작할 수 있습니다."
+              action={
+                <Button size="sm" nativeButton={false} render={<Link href="/contracts/new" />}>
+                  계약서 업로드
+                </Button>
+              }
+            />
           ) : (
             stats.recentlyUpdated.map((contract) => (
               <div key={contract.id} className="flex items-center justify-between text-sm">

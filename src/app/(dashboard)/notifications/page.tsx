@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { Bell } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ContractPagination } from "@/features/contracts/components/contract-pagination";
 import { MarkAllReadButton } from "@/features/notifications/components/mark-all-read-button";
 import { NotificationItem } from "@/features/notifications/components/notification-item";
@@ -50,9 +52,11 @@ export default async function NotificationsPage({
       <Card>
         <CardContent className="p-0">
           {result.items.length === 0 ? (
-            <p className="px-6 py-12 text-center text-sm text-muted-foreground">
-              알림이 없습니다.
-            </p>
+            <EmptyState
+              icon={Bell}
+              title="알림이 없습니다"
+              description="계약 만료·갱신이 다가오면 이곳에 알림이 표시됩니다."
+            />
           ) : (
             result.items.map((notification) => (
               <NotificationItem key={notification.id} {...notification} />

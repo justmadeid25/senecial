@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { ClipboardList, FileStack, History, ScanText, Sparkles, UploadCloud } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <p className="text-xs text-muted-foreground">{label}</p>
       <div className="text-sm">{children}</div>
     </div>
+  );
+}
+
+/**
+ * §Phase 14.3 §22 - scanning aid only: the icon carries no text content
+ * (aria-hidden svg), so `[data-slot="card-title"]`'s normalized text
+ * content stays byte-identical to before - tests/e2e/helpers/scoping.ts's
+ * `cardByHeading()` matches CardTitle text with an exact `^{heading}$`
+ * regex, which several E2E specs rely on for this exact page.
+ */
+function SectionTitle({ icon: Icon, children }: { icon: React.ElementType; children: React.ReactNode }) {
+  return (
+    <span className="flex items-center gap-2">
+      <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
+      {children}
+    </span>
   );
 }
 
@@ -133,7 +150,7 @@ export default async function ContractDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">계약 기본정보</CardTitle>
+          <CardTitle className="text-base"><SectionTitle icon={ClipboardList}>계약 기본정보</SectionTitle></CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="저장된 상태">
@@ -158,7 +175,7 @@ export default async function ContractDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">설명</CardTitle>
+          <CardTitle className="text-base"><SectionTitle icon={ScanText}>설명</SectionTitle></CardTitle>
         </CardHeader>
         <CardContent>
           <p className="whitespace-pre-wrap text-sm text-muted-foreground">
@@ -169,7 +186,7 @@ export default async function ContractDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">첨부 파일</CardTitle>
+          <CardTitle className="text-base"><SectionTitle icon={UploadCloud}>첨부 파일</SectionTitle></CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <ContractFileUploadForm contractId={contract.id} maxUploadSizeMb={MAX_UPLOAD_SIZE_MB} />
@@ -179,7 +196,7 @@ export default async function ContractDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">AI 및 문서 추출</CardTitle>
+          <CardTitle className="text-base"><SectionTitle icon={Sparkles}>AI 및 문서 추출</SectionTitle></CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <ExtractionSection contractId={contract.id} files={files} jobs={extractionJobs} />
@@ -188,7 +205,7 @@ export default async function ContractDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">계약 조항 분해</CardTitle>
+          <CardTitle className="text-base"><SectionTitle icon={FileStack}>계약 조항 분해</SectionTitle></CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <ClauseSegmentationSection
@@ -201,7 +218,7 @@ export default async function ContractDetailPage({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">변경 이력</CardTitle>
+          <CardTitle className="text-base"><SectionTitle icon={History}>변경 이력</SectionTitle></CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="생성자">{contract.createdBy?.name ?? "-"}</Field>

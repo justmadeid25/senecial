@@ -2,18 +2,30 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import { FileText, ScrollText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
+/**
+ * §Phase 14.3 §23/§24 - the wire payload already carries the full
+ * Citation tagged union (evidenceType/chunkId/sourcePageStart/
+ * sourcePageEnd - see domain/ai/citation.ts and src/app/api/ai/ask/route.ts's
+ * `citations` event), this client-side type just wasn't typing those
+ * fields before. No backend change - purely surfacing data that was
+ * already being sent, so clause vs. raw-document evidence can look
+ * different without the user needing to understand why.
+ */
 interface ChatCitation {
-  contractClauseId: string;
+  contractClauseId: string | null;
+  chunkId?: string | null;
   contractId: string;
   contractTitle: string;
   clauseReference: string;
   evidenceText: string;
   score: number;
+  evidenceType?: "clause" | "chunk";
 }
 
 interface ChatMessage {
@@ -23,6 +35,15 @@ interface ChatMessage {
 }
 
 /**
+ * §23/§24 - "Answer + Evidence", not a ChatGPT clone: citations render as
+ * small, distinct badges (clause vs. raw-document icon) with a hover
+ * preview of the actual evidence sentence - a trust device, not a
+ * footnote. §39 - `data-testid="ai-message-assistant"`, the "질문하기"
+ * button text, the question textarea's placeholder, the "근거" label, and
+ * `citation.contractTitle` being rendered as visible text are all
+ * preserved exactly - tests/e2e/ai-conversation-flow.spec.ts depends on
+ * every one of them.
+ *
  * §AI Conversation - reads the NDJSON stream from POST /api/ai/ask line by
  * line, appending each "chunk" event to the in-progress assistant message
  * as it arrives (real incremental rendering, not a single final paint).
@@ -126,33 +147,66 @@ export function AiChat() {
             계약에 대해 궁금한 점을 질문해 보세요. AI는 실제 계약 조항의 근거를 찾아 인용과 함께 답변합니다.
           </p>
         )}
-        {messages.map((message, index) => (
-          <Card
-            key={index}
-            data-testid={message.role === "assistant" ? "ai-message-assistant" : "ai-message-user"}
-            className={message.role === "user" ? "bg-muted" : ""}
-          >
-            <CardContent className="space-y-2 pt-4">
-              <p className="text-xs font-medium text-muted-foreground">
-                {message.role === "user" ? "나" : "AI"}
-              </p>
-              <p className="whitespace-pre-wrap text-sm">{message.content || (isStreaming ? "…" : "")}</p>
+        {messages.map((message, index) => {
+          const isLastAssistant =
+            message.role === "assistant" && index === messages.length - 1 && isStreaming;
+          if (message.role === "user") {
+            return (
+              <div key={index} data-testid="ai-message-user" className="flex justify-end">
+                <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+                  {message.content}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div
+              key={index}
+              data-testid="ai-message-assistant"
+              className="max-w-[92%] space-y-3 rounded-2xl rounded-tl-sm border border-border bg-card px-4 py-3"
+            >
+              {message.content ? (
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{message.content}</p>
+              ) : isLastAssistant ? (
+                <div className="flex items-center gap-1 py-1" aria-label="답변 생성 중">
+                  <span className="ai-thinking-dot size-1.5 rounded-full bg-primary" />
+                  <span className="ai-thinking-dot size-1.5 rounded-full bg-primary [animation-delay:150ms]" />
+                  <span className="ai-thinking-dot size-1.5 rounded-full bg-primary [animation-delay:300ms]" />
+                </div>
+              ) : null}
+
               {message.citations && message.citations.length > 0 && (
-                <div className="space-y-1 border-t pt-2">
-                  <p className="text-xs font-medium text-muted-foreground">근거</p>
-                  {message.citations.map((citation, citationIndex) => (
-                    <div key={citationIndex} className="text-xs text-muted-foreground">
-                      <Link href={`/contracts/${citation.contractId}`} className="text-primary hover:underline">
-                        {citation.contractTitle}
-                      </Link>{" "}
-                      · {citation.clauseReference} · &ldquo;{citation.evidenceText}&rdquo;
-                    </div>
-                  ))}
+                <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-2.5">
+                  <span className="text-xs font-medium text-muted-foreground">근거</span>
+                  {message.citations.map((citation, citationIndex) => {
+                    const isChunk = citation.evidenceType === "chunk";
+                    const Icon = isChunk ? ScrollText : FileText;
+                    return (
+                      <Tooltip key={citationIndex}>
+                        <TooltipTrigger
+                          render={
+                            <Link
+                              href={`/contracts/${citation.contractId}`}
+                              className="inline-flex items-center gap-1 rounded-full border border-border bg-accent/50 px-2 py-0.5 text-xs text-accent-foreground transition-colors duration-[--duration-micro] hover:border-primary/40 hover:bg-accent"
+                            />
+                          }
+                        >
+                          <Icon className="size-3" aria-hidden="true" />
+                          {citation.clauseReference}
+                          <span className="sr-only"> · {citation.contractTitle}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="font-medium">{citation.contractTitle}</p>
+                          <p className="mt-0.5 text-background/80">&ldquo;{citation.evidenceText}&rdquo;</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })}
                 </div>
               )}
-            </CardContent>
-          </Card>
-        ))}
+            </div>
+          );
+        })}
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
