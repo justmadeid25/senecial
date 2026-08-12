@@ -16,6 +16,25 @@ export const CONTRACT_EXTRACTABLE_FIELD_LABELS: Record<ContractExtractableField,
   counterpartyName: "계약 상대방",
 };
 
+/**
+ * §Phase 14.3 §32 - `ContractExtractedDocument.extractionMethod` stores
+ * the raw parsing LIBRARY name ("mammoth", "pdf-parse" - see
+ * document-text-extractor.ts's own docstring), an internal implementation
+ * detail that was leaking straight into the UI (계약 조항 분해 section)
+ * as if it were a meaningful label. Maps to the user's own language
+ * (file format) instead; an unrecognized/future method falls back to a
+ * generic label rather than ever showing the raw library string.
+ */
+export const EXTRACTION_METHOD_LABELS: Record<string, string> = {
+  mammoth: "Word 문서",
+  "pdf-parse": "PDF 문서",
+};
+
+export function extractionMethodLabel(method: string | null | undefined): string {
+  if (!method) return "-";
+  return EXTRACTION_METHOD_LABELS[method] ?? "문서";
+}
+
 export const EXTRACTION_JOB_STATUS_LABELS: Record<string, string> = {
   PENDING: "대기 중",
   PROCESSING: "처리 중",

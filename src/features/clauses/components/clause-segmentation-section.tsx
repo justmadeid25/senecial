@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CLAUSE_SEGMENTATION_JOB_STATUS_LABELS } from "@/domain/clauses/labels";
+import { extractionMethodLabel } from "@/domain/extraction/labels";
 import { StartSegmentationButton } from "@/features/clauses/components/start-segmentation-button";
 import type { ExtractedDocumentListItem } from "@/features/clauses/server/list-extracted-documents";
 import type { ClauseSegmentationJobListItem } from "@/features/clauses/server/list-clause-segmentation-jobs";
@@ -59,7 +60,7 @@ export function ClauseSegmentationSection({
           return (
             <TableRow key={document.id}>
               <TableCell className="font-medium">
-                {document.extractionMethod} · {document.characterCount.toLocaleString()}자
+                {extractionMethodLabel(document.extractionMethod)} · {document.characterCount.toLocaleString()}자
               </TableCell>
               <TableCell>
                 {job ? (

@@ -9,6 +9,7 @@ import { CONTRACT_TYPE_LABELS } from "@/domain/contracts/labels";
 import {
   EXTRACTION_ERROR_CODE_LABELS,
   EXTRACTION_JOB_STATUS_LABELS,
+  extractionMethodLabel,
 } from "@/domain/extraction/labels";
 import type { ContractExtractableField } from "@/domain/extraction/extractable-fields";
 import { ApplySuggestionsButton } from "@/features/extraction/components/apply-suggestions-button";
@@ -136,7 +137,7 @@ export default async function ExtractionReviewPage({
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">추출 방식</p>
-            <p className="text-sm">{job.extractionMethod ?? "-"}</p>
+            <p className="text-sm">{extractionMethodLabel(job.extractionMethod)}</p>
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">페이지 / 문자 수</p>
