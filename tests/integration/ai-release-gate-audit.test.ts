@@ -390,17 +390,22 @@ describe("§Phase 14.1 Release Gate Audit - contract deletion removes raw retrie
   });
 
   /**
-   * §Phase 14.1 audit finding (documented, not a tenant-isolation
-   * release blocker - see the docstring above): the retrieval cache's
-   * checksum invalidation tracks the embedding SET only, not contract
-   * lifecycle, so a cached result computed before a deletion can still be
-   * served, within the SAME organization, until AI_RETRIEVAL_CACHE_TTL_SECONDS
-   * elapses. This is a real, verified characteristic (this test proves
-   * it), shared by the pre-existing clause-leg cache (hybridSearchClauses
-   * uses the identical checksum-based strategy) - not something Phase
-   * 14.1 introduced newly for chunks.
+   * §Phase 14.2 §8/§11 - FIXED. The Phase 14.1 audit found that the
+   * retrieval cache's checksum invalidation tracked the embedding SET
+   * only, not contract lifecycle, so a cached result computed before a
+   * deletion could still be served (same-org, bounded by
+   * AI_RETRIEVAL_CACHE_TTL_SECONDS). getLatestChunkEmbeddingGenerationChecksum()/
+   * getLatestEmbeddingGenerationChecksum() now scope their aggregate to
+   * latestAuthoritativeExtractedDocumentIdsForOrganization()/
+   * latestAuthoritativeClauseSegmentationJobIdsForOrganization() (both
+   * ai-retrieval-freshness.ts, both re-derive LIVE contracts on every
+   * call) - a contract soft-delete immediately changes the eligible-id
+   * set, which immediately changes the checksum, which is recomputed
+   * fresh on every call (never itself cached) - so a cache "hit" against
+   * the OLD checksum can never happen again after a deletion, with no TTL
+   * wait required.
    */
-  it("[documented finding] the CACHED hybridSearchDocumentChunks wrapper can still serve a just-deleted contract's chunks within the TTL window (same-org staleness, not cross-org leakage)", async () => {
+  it("soft-deleting a contract immediately invalidates the retrieval cache - no TTL wait required", async () => {
     const before = await hybridSearchDocumentChunks({
       organizationId: orgA.organizationId,
       question: "비밀유지 의무 관련 캐시 조회",
@@ -415,11 +420,7 @@ describe("§Phase 14.1 Release Gate Audit - contract deletion removes raw retrie
         question: "비밀유지 의무 관련 캐시 조회",
         topK: 20,
       });
-      // Documented as a known cache-staleness characteristic, not asserted
-      // as "must be excluded" - this test exists to make the behavior
-      // explicit and regression-visible, not to demand a fix this audit
-      // is not scoped to make (see docstring above).
-      expect(after.some((r) => r.contractId === orgA.contractId)).toBe(true);
+      expect(after.some((r) => r.contractId === orgA.contractId)).toBe(false);
     } finally {
       await prisma.contract.update({ where: { id: orgA.contractId }, data: { deletedAt: null } });
     }

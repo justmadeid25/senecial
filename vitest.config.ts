@@ -32,6 +32,8 @@ const QUEUE_TEST_FILES = [
   "tests/integration/ai-chunk-tenant-isolation.test.ts",
   "tests/integration/ai-prompt-cache-tenant-isolation.test.ts",
   "tests/integration/ai-release-gate-audit.test.ts",
+  "tests/integration/ai-revision-freshness.test.ts",
+  "tests/integration/ai-failed-reextraction-safety.test.ts",
   "tests/integration/ai-extraction-miss-recovery.test.ts",
   "tests/integration/ai-comprehensive-review-coverage.test.ts",
   "tests/integration/hybrid-search.test.ts",
