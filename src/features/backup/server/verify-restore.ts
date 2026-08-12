@@ -113,6 +113,48 @@ export async function verifyRestore(params: VerifyRestoreParams): Promise<Verify
           passed: true,
           detail: `실행 성공 (${fkCheck.rowCount ?? 0}행 확인)`,
         });
+
+        // Phase 14 Part 4 - a restore that matches every other row count
+        // can still have silently lost vector search: pg_dump/pg_restore
+        // captures `CREATE EXTENSION vector` and the HNSW index as DDL,
+        // but a target Postgres without the pgvector extension available
+        // can fail or skip just that statement while the rest of the
+        // restore succeeds. Checked explicitly rather than assumed.
+        const extensionRows = await client.query<{ extversion: string }>(
+          `SELECT extversion FROM pg_extension WHERE extname = 'vector'`
+        );
+        const extensionInstalled = (extensionRows.rowCount ?? 0) > 0;
+        checks.push({
+          name: "pgvector extension 복원됨",
+          passed: extensionInstalled,
+          detail: extensionInstalled ? `version=${extensionRows.rows[0]?.extversion}` : "extension이 복원되지 않음",
+        });
+
+        const indexRows = await client.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_indexes
+             WHERE tablename = 'clause_embeddings' AND indexname = 'clause_embeddings_vector_native_hnsw_idx'
+           ) AS "exists"`
+        );
+        const indexExists = indexRows.rows[0]?.exists ?? false;
+        checks.push({
+          name: "HNSW 벡터 인덱스 복원됨",
+          passed: indexExists,
+          detail: indexExists ? "clause_embeddings_vector_native_hnsw_idx 존재" : "인덱스가 복원되지 않음",
+        });
+
+        if (extensionInstalled) {
+          try {
+            await client.query(`SELECT '[1,0,0]'::vector(3) <=> '[1,0,0]'::vector(3)`);
+            checks.push({ name: "벡터 유사도 쿼리 실행", passed: true, detail: "실행 성공" });
+          } catch (error) {
+            checks.push({
+              name: "벡터 유사도 쿼리 실행",
+              passed: false,
+              detail: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       });
     } catch (error) {
       checks.push({

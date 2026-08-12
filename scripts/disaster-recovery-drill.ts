@@ -28,10 +28,10 @@ async function main() {
 
   console.log(`재해 복구 훈련 완료: ${result.drillId} (${result.durationMs}ms)`);
   console.log(
-    `- 원본 row count: organizations=${result.sourceCounts.organizations}, users=${result.sourceCounts.users}, contracts=${result.sourceCounts.contracts}`
+    `- 원본 row count: organizations=${result.sourceCounts.organizations}, users=${result.sourceCounts.users}, contracts=${result.sourceCounts.contracts}, clause_embeddings=${result.sourceCounts.clauseEmbeddings}`
   );
   console.log(
-    `- 복원 row count: organizations=${result.targetCounts.organizations}, users=${result.targetCounts.users}, contracts=${result.targetCounts.contracts}`
+    `- 복원 row count: organizations=${result.targetCounts.organizations}, users=${result.targetCounts.users}, contracts=${result.targetCounts.contracts}, clause_embeddings=${result.targetCounts.clauseEmbeddings}`
   );
   console.log(`- row count 일치: ${result.rowCountsMatch ? "예" : "아니오"}`);
   for (const check of result.verify.checks) {

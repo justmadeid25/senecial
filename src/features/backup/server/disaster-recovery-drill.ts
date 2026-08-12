@@ -17,8 +17,8 @@ import { verifyRestore } from "./verify-restore";
 export interface DisasterRecoveryDrillResult {
   drillId: string;
   durationMs: number;
-  sourceCounts: { organizations: number; users: number; contracts: number };
-  targetCounts: { organizations: number; users: number; contracts: number };
+  sourceCounts: { organizations: number; users: number; contracts: number; clauseEmbeddings: number };
+  targetCounts: { organizations: number; users: number; contracts: number; clauseEmbeddings: number };
   rowCountsMatch: boolean;
   verify: Awaited<ReturnType<typeof verifyRestore>>;
 }
@@ -110,7 +110,8 @@ export async function runDisasterRecoveryDrill(
     const rowCountsMatch =
       sourceCounts.organizations === targetCounts.organizations &&
       sourceCounts.users === targetCounts.users &&
-      sourceCounts.contracts === targetCounts.contracts;
+      sourceCounts.contracts === targetCounts.contracts &&
+      sourceCounts.clauseEmbeddings === targetCounts.clauseEmbeddings;
 
     return {
       drillId,
@@ -133,19 +134,26 @@ export async function runDisasterRecoveryDrill(
 
 async function countCoreRows(
   databaseUrl: string
-): Promise<{ organizations: number; users: number; contracts: number }> {
+): Promise<{ organizations: number; users: number; contracts: number; clauseEmbeddings: number }> {
   return withTargetDatabaseClient(databaseUrl, async (client) => {
-    const { rows } = await client.query<{ organizations: string; users: string; contracts: string }>(
+    const { rows } = await client.query<{
+      organizations: string;
+      users: string;
+      contracts: string;
+      clause_embeddings: string;
+    }>(
       `SELECT
          (SELECT COUNT(*) FROM organizations) AS organizations,
          (SELECT COUNT(*) FROM users) AS users,
-         (SELECT COUNT(*) FROM contracts) AS contracts`
+         (SELECT COUNT(*) FROM contracts) AS contracts,
+         (SELECT COUNT(*) FROM clause_embeddings) AS clause_embeddings`
     );
     const row = rows[0];
     return {
       organizations: Number(row?.organizations ?? 0),
       users: Number(row?.users ?? 0),
       contracts: Number(row?.contracts ?? 0),
+      clauseEmbeddings: Number(row?.clause_embeddings ?? 0),
     };
   });
 }

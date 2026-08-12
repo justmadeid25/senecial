@@ -66,4 +66,25 @@ pnpm disaster-recovery:drill
 
 잘못된 key, 변조된 ciphertext, 변조된 인증 태그, checksum 불일치는 모두 명시적으로 거부됨을 `tests/unit/backup-encryption.test.ts`로 확인했습니다(각각 별도 테스트 케이스).
 
+## Phase 14 Part 4 - 벡터/임베딩 복원 검증 추가 + 재확인
+
+이전 실행까지는 row count 비교와 `verifyRestore()`의 체크리스트가 `organizations`/`users`/`contracts`/`contract_files`와 storage 파일 수만 다뤘습니다 — pgvector extension이나 HNSW 인덱스, 임베딩 자체가 실제로 복원되었는지는 검증하지 않았습니다. `pg_dump`/`pg_restore`는 `CREATE EXTENSION vector`와 HNSW 인덱스를 DDL로 캡처하지만, 대상 Postgres에 pgvector가 없으면 그 문(statement)만 조용히 실패/스킵되고 나머지 복원은 성공할 수 있어 row count만으로는 이 실패를 잡지 못합니다. `clause_embeddings` row count를 원본/복원 비교에 추가했고, `verifyRestore()`에 pgvector extension 존재 확인 / HNSW 인덱스 존재 확인 / 실제 벡터 유사도 쿼리 실행 세 가지 체크를 추가했습니다.
+
+이 세션에서 다시 처음부터 끝까지 실행해 확인:
+
+```
+재해 복구 훈련 완료: dr_drill_1786518169606_91f3b6 (5788ms)
+- 원본 row count: organizations=5, users=7, contracts=1210, clause_embeddings=1641
+- 복원 row count: organizations=5, users=7, contracts=1210, clause_embeddings=1641
+- row count 일치: 예
+- [OK] manifest 읽기 / DB 백업 checksum 일치 / storage 백업 checksum 일치
+- [OK] DB 연결(health) / migration 일치 / 핵심 테이블 row count / FK 조인 쿼리
+- [OK] pgvector extension 복원됨: version=0.8.6
+- [OK] HNSW 벡터 인덱스 복원됨: clause_embeddings_vector_native_hnsw_idx 존재
+- [OK] 벡터 유사도 쿼리 실행: 실행 성공
+- [OK] storage 파일 수 일치(475개)
+```
+
+드릴 종료 후 마커 조직/임시 DB가 전부 정리되었음을 다시 확인. 이 세션에서는 (앞선 세션과 달리) `docker` CLI가 실제로 사용 가능했으므로, DB/Redis/MinIO는 `docker-compose.yml`의 컨테이너를 그대로 사용했고 `pg_dump`/`pg_restore`만 winget으로 설치한 PostgreSQL 18 클라이언트 도구를 PATH에 추가해 사용했습니다.
+
 관련 문서: [backup.md](./backup.md), [restore.md](./restore.md), [incident-response.md](./incident-response.md)
