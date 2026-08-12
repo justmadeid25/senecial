@@ -29,23 +29,25 @@ test.describe("landing page", () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
-  test("§28 - 375px viewport renders with no horizontal overflow", async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto("/");
-    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    const bodyScrollWidth = await page.evaluate(() => document.body.scrollWidth);
-    const viewportWidth = await page.evaluate(() => window.innerWidth);
-    expect(bodyScrollWidth).toBeLessThanOrEqual(viewportWidth + 1);
-  });
-
-  test("§28 - 1440px viewport renders with no horizontal overflow", async ({ page }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/");
-    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    const bodyScrollWidth = await page.evaluate(() => document.body.scrollWidth);
-    const viewportWidth = await page.evaluate(() => window.innerWidth);
-    expect(bodyScrollWidth).toBeLessThanOrEqual(viewportWidth + 1);
-  });
+  // §28 - all 5 required breakpoints, not just the two smallest/largest -
+  // a mid-range regression (e.g. a lg: breakpoint firing one size too
+  // early) would slip through if only 375/1440 were checked.
+  for (const { width, height } of [
+    { width: 375, height: 812 },
+    { width: 768, height: 1024 },
+    { width: 1024, height: 768 },
+    { width: 1440, height: 900 },
+    { width: 1920, height: 1080 },
+  ]) {
+    test(`§28 - ${width}px viewport renders with no horizontal overflow`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto("/");
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      const bodyScrollWidth = await page.evaluate(() => document.body.scrollWidth);
+      const viewportWidth = await page.evaluate(() => window.innerWidth);
+      expect(bodyScrollWidth).toBeLessThanOrEqual(viewportWidth + 1);
+    });
+  }
 
   test("§12 - prefers-reduced-motion stops the ambient background animation", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
