@@ -47,6 +47,22 @@ const nextConfig: NextConfig = {
       // (see README).
       bodySizeLimit: `${SERVER_ACTION_BODY_SIZE_LIMIT_MB}mb`,
     },
+    // Phase 14 Part 5 - REAL bug found via live-measured large-file-upload
+    // load testing: every request (including this Server Action's own
+    // multipart body) passes through middleware.ts first, and Next.js
+    // caps how much of the body the middleware/proxy layer will buffer at
+    // a SEPARATE, lower default (10MB - confirmed via
+    // .next/required-server-files.json's `proxyClientMaxBodySize`, and by
+    // reproducing the exact failure live: uploads above ~10MB truncated
+    // mid-stream with a raw "Unexpected end of form" error, well BELOW
+    // the intended 20MB/25MB ceiling above). This is a distinct config
+    // key from `serverActions.bodySizeLimit` (renamed from
+    // `middlewareClientMaxBodySize` when Next 16 renamed middleware ->
+    // proxy - see the `proxy` upgrade codemod) and was never configured,
+    // so it silently won on every upload above 10MB regardless of the
+    // serverActions limit above. Matches the same computed ceiling so
+    // neither layer is the tighter one.
+    proxyClientMaxBodySize: `${SERVER_ACTION_BODY_SIZE_LIMIT_MB}mb`,
   },
 };
 
