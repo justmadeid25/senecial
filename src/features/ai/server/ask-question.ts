@@ -4,7 +4,8 @@ import { AI_USAGE_OPERATION_TYPES } from "@/domain/ai/ai-usage-operation";
 import { hashCacheInput } from "@/domain/ai/cache-key";
 import type { Citation } from "@/domain/ai/citation";
 import { assertEveryParagraphHasCitation, CITATION_VALIDATOR_VERSION } from "@/domain/ai/citation-required";
-import { assertQuestionWithinBudget, truncateToContextBudget } from "@/domain/ai/context-budget";
+import { assertQuestionWithinBudget } from "@/domain/ai/context-budget";
+import { packCitationsWithinTokenBudget } from "@/domain/ai/context-token-budget";
 import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
 import { checkEvidenceSufficiency, UNKNOWN_ANSWER_TEXT } from "@/domain/ai/hallucination-guard";
 import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
@@ -20,6 +21,7 @@ import {
   recordAiRequestStart,
   recordCacheEvent,
   recordCacheStampedeJoined,
+  recordContextTokenUsage,
   recordContextTruncation,
   recordDependencyLatency,
   recordLatencyBudgetExceeded,
@@ -68,12 +70,20 @@ async function reserveLlmBudget(params: {
   });
 }
 
-/** §Phase 12.2 Part E (§30) - applies CONTEXT_MAX_CLAUSES to the hallucination guard's already-scored strongCitations, recording a metric (never the dropped content) when truncation actually happens. */
-function applyContextBudget(citations: Citation[]): Citation[] {
-  const { kept, truncated } = truncateToContextBudget(citations);
+/**
+ * §Phase 14.1 §5 - packs the hallucination guard's already-scored
+ * strongCitations into the real token budget (packCitationsWithinTokenBudget),
+ * replacing the old fixed CONTEXT_MAX_CLAUSES=8 slice. Recording a metric
+ * (never the dropped content, never the exact token count itself here -
+ * that's `totalContextTokens`, recorded separately) when truncation
+ * actually happens.
+ */
+function applyContextBudget(question: string, citations: Citation[]): Citation[] {
+  const { kept, truncated, totalContextTokens } = packCitationsWithinTokenBudget(question, citations);
   if (truncated) {
     recordContextTruncation();
   }
+  recordContextTokenUsage(totalContextTokens);
   return kept;
 }
 
@@ -188,7 +198,7 @@ export async function askQuestion(params: { organizationId: string; question: st
       return { answerText: UNKNOWN_ANSWER_TEXT, citations: [], sufficient: false };
     }
 
-    const contextCitations = applyContextBudget(guard.strongCitations);
+    const contextCitations = applyContextBudget(params.question, guard.strongCitations);
 
     await recordAiSearchPatterns({
       organizationId: params.organizationId,
@@ -350,7 +360,7 @@ export async function* askQuestionStreaming(params: {
       return;
     }
 
-    const contextCitations = applyContextBudget(guard.strongCitations);
+    const contextCitations = applyContextBudget(params.question, guard.strongCitations);
 
     await recordAiSearchPatterns({
       organizationId: params.organizationId,

@@ -20,7 +20,8 @@ function baseConfig(overrides: Partial<AiRuntimeConfiguration> = {}): AiRuntimeC
     searchWeightVersion: "2",
     rerankerVersion: "exact-phrase-bonus-v1",
     retrievalTopK: 10,
-    contextMaxClauses: 8,
+    contextMaxTokens: 128_000,
+    contextBudgetVersion: "token-budget-v1",
     hallucinationGuardVersion: "v1",
     hallucinationThreshold: 0.15,
     refusalThreshold: 1,
@@ -47,7 +48,8 @@ describe("computeAiConfigChecksum (Phase 12.2 §21)", () => {
       refusalThreshold: a.refusalThreshold,
       hallucinationThreshold: a.hallucinationThreshold,
       hallucinationGuardVersion: a.hallucinationGuardVersion,
-      contextMaxClauses: a.contextMaxClauses,
+      contextBudgetVersion: a.contextBudgetVersion,
+      contextMaxTokens: a.contextMaxTokens,
       retrievalTopK: a.retrievalTopK,
       rerankerVersion: a.rerankerVersion,
       searchWeightVersion: a.searchWeightVersion,
@@ -80,7 +82,15 @@ describe("computeAiConfigChecksum (Phase 12.2 §21)", () => {
   it("§20 - the type has no field for any secret/credential (compile-time guarantee, asserted here defensively at runtime)", () => {
     const config = baseConfig();
     const serialized = JSON.stringify(config).toLowerCase();
-    for (const forbidden of ["apikey", "api_key", "secret", "token", "password", "credential"]) {
+    for (const forbidden of ["apikey", "api_key", "secret", "password", "credential"]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+    // "token" alone is too broad a substring to forbid outright - §Phase
+    // 14.1 §5 legitimately added `contextMaxTokens` (an LLM tokenizer
+    // sizing unit, the same "tokens" vocabulary as promptTokens/
+    // completionTokens elsewhere in this codebase), which is not a
+    // credential. The real danger is an AUTH token field specifically.
+    for (const forbidden of ["apitoken", "authtoken", "accesstoken", "refreshtoken", "bearertoken", "sessiontoken"]) {
       expect(serialized).not.toContain(forbidden);
     }
   });

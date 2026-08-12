@@ -44,7 +44,8 @@ export function buildSystemPrompt(): string {
  * instructed (via the system prompt above) to treat them as the ONLY
  * source of truth, never the model's own training knowledge.
  */
-function buildCitationBlock(citation: Citation, index: number): string {
+/** Exported for context-token-budget.ts, which needs the EXACT block text (not an approximation of its shape) to compute real per-citation token cost via the same tokenizer that would see it in the actual prompt. */
+export function buildCitationBlock(citation: Citation, index: number): string {
   return [
     `[CITATION ${index}]`,
     `조항: ${citation.clauseReference}`,

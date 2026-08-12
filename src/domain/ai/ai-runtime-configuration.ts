@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
  * each field's own `*Version` value below. This distinguishes "the shape
  * of what we version" from "the values being versioned."
  */
-export const AI_CONFIG_VERSION = "12.2.0";
+export const AI_CONFIG_VERSION = "14.1.0";
 
 /**
  * §20 - the single, versioned object every AI-quality-relevant setting
@@ -32,7 +32,9 @@ export interface AiRuntimeConfiguration {
   searchWeightVersion: string;
   rerankerVersion: string;
   retrievalTopK: number;
-  contextMaxClauses: number;
+  /** §Phase 14.1 §5 - replaces the old fixed contextMaxClauses count. The real token budget evidence packing must fit under (context-token-budget.ts). */
+  contextMaxTokens: number;
+  contextBudgetVersion: string;
   hallucinationGuardVersion: string;
   hallucinationThreshold: number;
   refusalThreshold: number;

@@ -39,7 +39,8 @@ async function main() {
       searchWeightVersion: aiConfig.searchWeightVersion,
       rerankerVersion: aiConfig.rerankerVersion,
       retrievalTopK: aiConfig.retrievalTopK,
-      contextMaxClauses: aiConfig.contextMaxClauses,
+      contextMaxTokens: aiConfig.contextMaxTokens,
+      contextBudgetVersion: aiConfig.contextBudgetVersion,
     },
     guards: {
       hallucinationGuardVersion: aiConfig.hallucinationGuardVersion,

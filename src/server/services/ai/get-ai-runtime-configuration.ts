@@ -5,7 +5,7 @@ import {
 } from "@/domain/ai/ai-runtime-configuration";
 import { RISK_LANGUAGE_GUARD_VERSION } from "@/domain/ai/ai-review-guard";
 import { CITATION_VALIDATOR_VERSION } from "@/domain/ai/citation-required";
-import { CONTEXT_MAX_CLAUSES } from "@/domain/ai/context-budget";
+import { AI_LLM_CONTEXT_WINDOW_TOKENS, CONTEXT_BUDGET_VERSION } from "@/domain/ai/context-token-budget";
 import { HALLUCINATION_GUARD_VERSION, MIN_CITATION_COUNT, MIN_CITATION_SCORE } from "@/domain/ai/hallucination-guard";
 import {
   EXACT_PHRASE_BONUS,
@@ -60,7 +60,8 @@ export function getAiRuntimeConfiguration(overrides?: { embeddingProvider?: Embe
     searchWeightVersion: String(SEARCH_WEIGHT_VERSION),
     rerankerVersion: RERANKER_VERSION,
     retrievalTopK: DEFAULT_TOP_K,
-    contextMaxClauses: CONTEXT_MAX_CLAUSES,
+    contextMaxTokens: AI_LLM_CONTEXT_WINDOW_TOKENS,
+    contextBudgetVersion: CONTEXT_BUDGET_VERSION,
     hallucinationGuardVersion: HALLUCINATION_GUARD_VERSION,
     hallucinationThreshold: MIN_CITATION_SCORE,
     refusalThreshold: MIN_CITATION_COUNT,

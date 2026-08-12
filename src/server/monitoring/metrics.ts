@@ -98,6 +98,8 @@ let staleEmbeddingCount = 0;
 
 /** §Phase 12.2 Part E - context/token budget enforcement counters (domain/ai/context-budget.ts). */
 let contextTruncationTotal = 0;
+/** §Phase 14.1 §5/§19 - real per-request context token usage (domain/ai/context-token-budget.ts's packCitationsWithinTokenBudget), never an estimate - the exact tokenized size of the system+user prompt actually sent to the LLM. */
+const contextTokenUsage = newSummary();
 /** §Phase 12.2 Part E - per-operation latency budget violations, keyed by the same dependency names as dependencyLatencies above (a stricter bar than SLOW_THRESHOLD_MS - see domain/ai/latency-budget.ts). */
 const latencyBudgetExceededTotal = new Map<string, number>();
 /** §Phase 12.2 Part E (§33 concurrency) - current in-flight AI requests, process-wide. A gauge, not a counter. */
@@ -305,9 +307,14 @@ export function recordCacheEvent(cacheName: string, hit: boolean): void {
   map.set(cacheName, (map.get(cacheName) ?? 0) + 1);
 }
 
-/** §Phase 12.2 Part E - a context list was truncated to fit CONTEXT_MAX_CLAUSES (domain/ai/context-budget.ts). Never logs the dropped content, only that truncation happened. */
+/** §Phase 14.1 §5 - a context citation list was truncated to fit the real token budget (domain/ai/context-token-budget.ts). Never logs the dropped content, only that truncation happened. */
 export function recordContextTruncation(): void {
   contextTruncationTotal += 1;
+}
+
+/** §Phase 14.1 §5/§19 - records the exact token count of one request's fully-assembled prompt (system+user messages), after packCitationsWithinTokenBudget() has already decided what fits. */
+export function recordContextTokenUsage(tokens: number): void {
+  addSample(contextTokenUsage, tokens);
 }
 
 /** §Phase 12.2 Part E - a dependency call exceeded its NAMED p95 budget (domain/ai/latency-budget.ts), stricter/more specific than the blanket SLOW_THRESHOLD_MS warn log. */
@@ -474,6 +481,12 @@ export function renderPrometheusMetrics(): string {
   lines.push("# HELP senecial_ai_context_truncation_total Requests whose citation list was truncated to fit the context budget.");
   lines.push("# TYPE senecial_ai_context_truncation_total counter");
   lines.push(`senecial_ai_context_truncation_total ${contextTruncationTotal}`);
+
+  lines.push("# HELP senecial_ai_context_token_usage Exact token count of the fully-assembled prompt actually sent to the LLM.");
+  lines.push("# TYPE senecial_ai_context_token_usage summary");
+  lines.push(`senecial_ai_context_token_usage_count ${contextTokenUsage.count}`);
+  lines.push(`senecial_ai_context_token_usage_sum ${contextTokenUsage.sum}`);
+  lines.push(`senecial_ai_context_token_usage_max ${contextTokenUsage.max}`);
 
   lines.push("# HELP senecial_ai_latency_budget_exceeded_total Dependency calls that exceeded their named per-operation latency budget.");
   lines.push("# TYPE senecial_ai_latency_budget_exceeded_total counter");

@@ -1,6 +1,5 @@
 import { GOLDEN_DATASET_CLAUSES, GOLDEN_DATASET_QUESTIONS } from "@/domain/ai/evaluation/golden-dataset";
 import { estimateAiCostMinor } from "@/domain/ai/pricing";
-import { CONTEXT_MAX_CLAUSES } from "@/domain/ai/context-budget";
 import { DEFAULT_TOP_K } from "@/domain/ai/retrieval-config";
 import { getEmbeddingProvider } from "@/server/services/ai/get-embedding-provider";
 import { getLlmProvider } from "@/server/services/ai/get-llm-provider";
@@ -46,7 +45,16 @@ export function estimateProviderEvaluationCost(): ProviderEvaluationCostEstimate
   const questionEmbeddingTokens = GOLDEN_DATASET_QUESTIONS.reduce((sum, q) => sum + estimateTokens(q.question), 0);
   const estimatedEmbeddingTokens = clauseTokens + questionEmbeddingTokens;
 
-  const topK = Math.min(DEFAULT_TOP_K, CONTEXT_MAX_CLAUSES);
+  // §Phase 14.1 §5 - there is no fixed evidence-count cap anymore (see
+  // context-token-budget.ts's real token-budget packing); this pre-flight
+  // estimate instead assumes the worst case it can actually reach: TWO
+  // retrieval legs (clause + chunk, see retrieve-context.ts) each
+  // contributing up to DEFAULT_TOP_K candidates before token-budget
+  // selection ever trims anything. Deliberately an overestimate (this
+  // script's whole purpose is "should an operator feel safe running
+  // --execute" - see its own docstring), not a tight prediction of what
+  // packCitationsWithinTokenBudget() would actually keep.
+  const topK = DEFAULT_TOP_K * 2;
   const avgClauseTokens = clauseTokens / Math.max(1, GOLDEN_DATASET_CLAUSES.length);
   const estimatedLlmInputTokens = GOLDEN_DATASET_QUESTIONS.reduce(
     (sum, q) => sum + estimateTokens(q.question) + PROMPT_OVERHEAD_TOKENS_PER_QUESTION + topK * avgClauseTokens,
