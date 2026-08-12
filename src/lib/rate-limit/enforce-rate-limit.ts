@@ -1,8 +1,46 @@
 import { RATE_LIMIT_BUDGETS, type RateLimitPurpose } from "@/lib/config/rate-limit";
+import { loadRateLimitFailMode } from "@/lib/config/redis";
 import { RateLimitError } from "@/lib/errors";
 import { getClientIpPrefix } from "@/lib/http/client-ip";
 import { buildRateLimitKey } from "@/domain/rate-limit/rate-limit-key";
+import { getLogger } from "@/server/logging";
 import { getRateLimiter } from "@/server/services/rate-limit";
+
+const RATE_LIMITER_UNAVAILABLE_RETRY_SECONDS = 30;
+
+/**
+ * §20 - RedisRateLimiter.consume() deliberately lets connection/timeout
+ * errors propagate as-is (see its own docstring) rather than interpreting
+ * them itself, precisely so this ONE call site can apply
+ * RATE_LIMIT_FAIL_MODE consistently for every purpose. Before this, that
+ * env var was parsed but never actually read anywhere - every caller's
+ * `catch (e) { if (e instanceof RateLimitError) {...}; throw e; }` pattern
+ * (see login-action.ts and friends) re-threw the raw Redis error as an
+ * unhandled exception regardless of the configured mode, which happened to
+ * still block the request (a crash blocks too) but never in a controlled,
+ * user-facing way, and "open" had zero effect even when explicitly set.
+ *
+ * "closed" (default): re-thrown as a RateLimitError, so every existing
+ * `instanceof RateLimitError` catch block already handles this exactly
+ * like an exhausted budget - no other call site needs to change.
+ * "open": logged and treated as allowed - an explicit, audited opt-out for
+ * an active Redis incident, never the default.
+ */
+function handleRateLimiterUnavailable(error: unknown): void {
+  const failMode = loadRateLimitFailMode();
+  if (failMode === "open") {
+    getLogger().error("rate_limit.unavailable_failing_open", {
+      errorCode: error instanceof Error ? error.name : "UNKNOWN_ERROR",
+    });
+    return;
+  }
+  getLogger().error("rate_limit.unavailable_failing_closed", {
+    errorCode: error instanceof Error ? error.name : "UNKNOWN_ERROR",
+  });
+  throw new RateLimitError(new Date(Date.now() + RATE_LIMITER_UNAVAILABLE_RETRY_SECONDS * 1000), {
+    message: "일시적으로 요청을 처리할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+  });
+}
 
 /**
  * Consumes one unit of the named purpose's budget for the current
@@ -19,11 +57,17 @@ export async function enforceRateLimit(purpose: RateLimitPurpose, identifier: st
   const ipPrefix = await getClientIpPrefix();
   const key = buildRateLimitKey(purpose, identifier, ipPrefix);
 
-  const result = await getRateLimiter().consume({
-    key,
-    limit: budget.limit,
-    windowSeconds: budget.windowSeconds,
-  });
+  let result;
+  try {
+    result = await getRateLimiter().consume({
+      key,
+      limit: budget.limit,
+      windowSeconds: budget.windowSeconds,
+    });
+  } catch (error) {
+    handleRateLimiterUnavailable(error);
+    return;
+  }
 
   if (!result.allowed) {
     throw new RateLimitError(result.resetAt, { limit: budget.limit, remaining: result.remaining });
@@ -58,9 +102,15 @@ export async function enforceLoginRateLimit(email: string): Promise<void> {
     { key: buildRateLimitKey("login", email, ipPrefix), budget: RATE_LIMIT_BUDGETS.login },
   ];
 
-  const results = await Promise.all(
-    axes.map((axis) => limiter.consume({ key: axis.key, limit: axis.budget.limit, windowSeconds: axis.budget.windowSeconds }))
-  );
+  let results;
+  try {
+    results = await Promise.all(
+      axes.map((axis) => limiter.consume({ key: axis.key, limit: axis.budget.limit, windowSeconds: axis.budget.windowSeconds }))
+    );
+  } catch (error) {
+    handleRateLimiterUnavailable(error);
+    return;
+  }
 
   const blocked = results.map((result, i) => ({ result, budget: axes[i]!.budget })).filter((entry) => !entry.result.allowed);
   const worst = blocked[0];
