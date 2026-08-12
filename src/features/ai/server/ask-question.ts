@@ -144,23 +144,35 @@ export interface AskQuestionResult {
 }
 
 /**
- * §Cache (Phase 12 Part N), extended §Phase 12.2 Part F (§34) - prompt/LLM
- * cache key. The full prompt (system + user messages, which already embed
- * every citation's evidence text and the question) is the cache's own
- * natural invalidation boundary for MOST changes: any change to the
- * question OR the retrieved citations produces a different key
- * automatically. `PROMPT_TEMPLATE_VERSION`/`CITATION_VALIDATOR_VERSION`
- * are still included EXPLICITLY (not just relied upon via content hashing)
- * per §34 - a version bump that does NOT change buildPromptMessages()'s
- * actual output text (e.g. a version bump alongside an unrelated internal
- * refactor) would otherwise produce byte-identical serialized messages and
- * silently keep serving an answer generated under a prior guard/template
- * "version," even though the version number itself changed.
+ * §Cache (Phase 12 Part N), extended §Phase 12.2 Part F (§34), extended
+ * §Phase 14.1 §19 - prompt/LLM cache key. The full prompt (system + user
+ * messages, which already embed every citation's evidence text and the
+ * question) is the cache's own natural invalidation boundary for MOST
+ * changes: any change to the question OR the retrieved citations produces
+ * a different key automatically. `PROMPT_TEMPLATE_VERSION`/
+ * `CITATION_VALIDATOR_VERSION` are still included EXPLICITLY (not just
+ * relied upon via content hashing) per §34 - a version bump that does NOT
+ * change buildPromptMessages()'s actual output text (e.g. a version bump
+ * alongside an unrelated internal refactor) would otherwise produce
+ * byte-identical serialized messages and silently keep serving an answer
+ * generated under a prior guard/template "version," even though the
+ * version number itself changed.
+ *
+ * `organizationId` is included EXPLICITLY too, even though it is not
+ * strictly needed for correctness today (two organizations with
+ * byte-identical contract text and an identical question would produce an
+ * identical, and identically-correct, answer either way - see
+ * tests/integration/ai-chunk-tenant-isolation.test.ts's decoy-org
+ * fixture for exactly that scenario). §21's "cache keys must include
+ * org/contract scope... never share across orgs" is a structural
+ * requirement, not a "safe in practice" one - relying on content
+ * happening to differ across every real organization pair forever is not
+ * the same guarantee as the key itself being org-scoped.
  */
-function buildPromptCacheKey(llm: LlmProvider, messages: readonly LlmMessage[]): string {
+function buildPromptCacheKey(organizationId: string, llm: LlmProvider, messages: readonly LlmMessage[]): string {
   const serialized = messages.map((message) => `${message.role}:${message.content}`).join("\n---\n");
   return (
-    `prompt:${llm.providerName}:${llm.modelName}:p${PROMPT_TEMPLATE_VERSION}:` +
+    `prompt:${organizationId}:${llm.providerName}:${llm.modelName}:p${PROMPT_TEMPLATE_VERSION}:` +
     `c${CITATION_VALIDATOR_VERSION}:${hashCacheInput(serialized)}`
   );
 }
@@ -209,7 +221,7 @@ export async function askQuestion(params: { organizationId: string; question: st
 
     const messages = buildPromptMessages(params.question, contextCitations);
     const cache = getCacheProvider();
-    const cacheKey = buildPromptCacheKey(llm, messages);
+    const cacheKey = buildPromptCacheKey(params.organizationId, llm, messages);
 
     let answerText: string;
     const cached = await cache.get(cacheKey);
@@ -373,7 +385,7 @@ export async function* askQuestionStreaming(params: {
 
     const messages = buildPromptMessages(params.question, contextCitations);
     const cache = getCacheProvider();
-    const cacheKey = buildPromptCacheKey(llm, messages);
+    const cacheKey = buildPromptCacheKey(params.organizationId, llm, messages);
 
     const cached = await cache.get(cacheKey);
     if (cached !== undefined) {

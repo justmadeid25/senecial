@@ -30,6 +30,7 @@ const QUEUE_TEST_FILES = [
   // processNextExtractionJob()/processNextChunkEmbeddingJob().
   "tests/integration/document-chunk-embedding-pipeline.test.ts",
   "tests/integration/ai-chunk-tenant-isolation.test.ts",
+  "tests/integration/ai-prompt-cache-tenant-isolation.test.ts",
   "tests/integration/ai-extraction-miss-recovery.test.ts",
   "tests/integration/ai-comprehensive-review-coverage.test.ts",
   "tests/integration/hybrid-search.test.ts",
