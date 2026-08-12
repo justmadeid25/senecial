@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import type {
   DocumentChunkVectorSearchCandidate,
   DocumentChunkVectorSearchParams,
@@ -6,6 +7,7 @@ import type {
 import { VECTOR_NATIVE_DIMENSION } from "@/domain/ai/vector-search-config";
 import { cosineDistanceToSimilarity } from "@/domain/ai/vector-distance";
 import { serializeVectorForPg } from "@/domain/ai/vector-validation";
+import { latestAuthoritativeExtractedDocumentIdsForOrganization } from "@/server/repositories/ai-retrieval-freshness";
 import { prisma } from "@/server/db/client";
 
 interface PgVectorChunkRow {
@@ -23,18 +25,28 @@ interface PgVectorChunkRow {
 }
 
 /**
- * §Phase 14.1 - mirrors PgVectorClauseSearchProvider exactly, for
- * ContractDocumentChunk. No segmentation-revision filter (chunks have no
- * such concept - replaceDocumentChunks() always keeps exactly the current
- * generation, never stale old chunks alongside new ones) - organizationId,
- * live contract, isLatest embedding, matching provider/model, and
- * dimension match are all enforced in the SQL itself, never as an
- * after-the-fact application filter.
+ * §Phase 14.1, revised §Phase 14.2 - mirrors PgVectorClauseSearchProvider,
+ * for ContractDocumentChunk. §Phase 14.2 - a contract re-extracted via a
+ * second file upload leaves the FIRST extraction's ContractExtractedDocument
+ * (and its chunks) as live rows (replaceDocumentChunks() only replaces
+ * chunks for the SAME extractedDocumentId, never a prior generation's) -
+ * `extractedDocumentId = ANY(...)`, sourced from
+ * ai-retrieval-freshness.ts's latestAuthoritativeExtractedDocumentIdsForOrganization(),
+ * restricts every candidate to the single latest extraction per live
+ * contract. organizationId, live contract, latest extraction, isLatest
+ * embedding, matching provider/model, and dimension match are all
+ * enforced in the SQL itself, never as an after-the-fact application
+ * filter.
  */
 export class PgVectorDocumentChunkSearchProvider implements DocumentChunkVectorSearchProvider {
   readonly providerName = "pgvector" as const;
 
   async search(params: DocumentChunkVectorSearchParams): Promise<DocumentChunkVectorSearchCandidate[]> {
+    const eligibleDocumentIds = await latestAuthoritativeExtractedDocumentIdsForOrganization(params.organizationId);
+    if (eligibleDocumentIds.length === 0) {
+      return [];
+    }
+
     const queryVectorText = serializeVectorForPg(params.queryVector, VECTOR_NATIVE_DIMENSION);
 
     const rows = await prisma.$queryRaw<PgVectorChunkRow[]>`
@@ -59,6 +71,7 @@ export class PgVectorDocumentChunkSearchProvider implements DocumentChunkVectorS
         AND ce."model" = ${params.embeddingModel}
         AND ce."vectorNative" IS NOT NULL
         AND c."deletedAt" IS NULL
+        AND dc."extractedDocumentId" IN (${Prisma.join(eligibleDocumentIds)})
       ORDER BY "distance" ASC
       LIMIT ${params.topK}
     `;

@@ -4,28 +4,28 @@ import type {
   ClauseVectorSearchParams,
   ClauseVectorSearchProvider,
 } from "@/domain/ai/clause-vector-search-provider";
-import { latestReadySegmentationJobIdsForOrganization } from "@/server/repositories/analytics-repository";
+import { latestAuthoritativeClauseSegmentationJobIdsForOrganization } from "@/server/repositories/ai-retrieval-freshness";
 import { prisma } from "@/server/db/client";
 
 /**
- * §Phase 12.1 Part 8 - the pre-existing in-process cosine fallback,
- * refactored behind the ClauseVectorSearchProvider contract so
- * hybridSearchClauses/findSimilarClauses/etc. can use either this or
- * PgVectorClauseSearchProvider interchangeably. Same eligibility rules as
- * the pgvector provider (§9): org-scoped, only the latest ready
- * segmentation revision per document, only live (non-deleted) contracts,
+ * §Phase 12.1 Part 8, revised §Phase 14.2 - the pre-existing in-process
+ * cosine fallback, refactored behind the ClauseVectorSearchProvider
+ * contract so hybridSearchClauses/findSimilarClauses/etc. can use either
+ * this or PgVectorClauseSearchProvider interchangeably. Same eligibility
+ * rules as the pgvector provider (§9): org-scoped, only the latest ready
+ * segmentation revision PER CONTRACT, only live (non-deleted) contracts,
  * only the current embeddingVersion, only rows matching the requested
  * embedding provider/model - reusing
- * latestReadySegmentationJobIdsForOrganization() (the exact same helper
- * analytics already relies on for "latest revision only") rather than
- * re-deriving that logic, so the two providers can never silently drift
- * apart on eligibility and produce non-comparable result sets.
+ * latestAuthoritativeClauseSegmentationJobIdsForOrganization()
+ * (ai-retrieval-freshness.ts) so this provider and PgVectorClauseSearchProvider
+ * can never silently drift apart on eligibility and produce
+ * non-comparable result sets.
  */
 export class ApplicationCosineClauseSearchProvider implements ClauseVectorSearchProvider {
   readonly providerName = "application" as const;
 
   async search(params: ClauseVectorSearchParams): Promise<ClauseVectorSearchCandidate[]> {
-    const eligibleJobIds = await latestReadySegmentationJobIdsForOrganization(params.organizationId);
+    const eligibleJobIds = await latestAuthoritativeClauseSegmentationJobIdsForOrganization(params.organizationId);
     if (eligibleJobIds.length === 0) {
       return [];
     }

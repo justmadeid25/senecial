@@ -4,12 +4,14 @@ import type {
   DocumentChunkVectorSearchParams,
   DocumentChunkVectorSearchProvider,
 } from "@/domain/ai/document-chunk-vector-search-provider";
+import { latestAuthoritativeExtractedDocumentIdsForOrganization } from "@/server/repositories/ai-retrieval-freshness";
 import { prisma } from "@/server/db/client";
 
 /**
- * §Phase 14.1 - mirrors ApplicationCosineClauseSearchProvider exactly,
+ * §Phase 14.1, revised §Phase 14.2 - mirrors ApplicationCosineClauseSearchProvider,
  * for ContractDocumentChunk. Same eligibility rules as the pgvector
  * provider: org-scoped, only live (non-deleted) contracts, only the
+ * latest extraction per contract (ai-retrieval-freshness.ts), only the
  * current isLatest embedding, only rows matching the requested embedding
  * provider/model.
  */
@@ -17,13 +19,18 @@ export class ApplicationCosineDocumentChunkSearchProvider implements DocumentChu
   readonly providerName = "application" as const;
 
   async search(params: DocumentChunkVectorSearchParams): Promise<DocumentChunkVectorSearchCandidate[]> {
+    const eligibleDocumentIds = await latestAuthoritativeExtractedDocumentIdsForOrganization(params.organizationId);
+    if (eligibleDocumentIds.length === 0) {
+      return [];
+    }
+
     const embeddings = await prisma.contractDocumentChunkEmbedding.findMany({
       where: {
         organizationId: params.organizationId,
         isLatest: true,
         provider: params.embeddingProvider,
         model: params.embeddingModel,
-        chunk: { contract: { deletedAt: null } },
+        chunk: { contract: { deletedAt: null }, extractedDocumentId: { in: eligibleDocumentIds } },
       },
       select: {
         chunkId: true,

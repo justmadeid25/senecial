@@ -1,4 +1,5 @@
 import { KEYWORD_STEM_LENGTH } from "@/domain/ai/keyword-extraction";
+import { latestAuthoritativeClauseSegmentationJobIdsForOrganization } from "@/server/repositories/ai-retrieval-freshness";
 import { prisma } from "@/server/db/client";
 
 /**
@@ -27,12 +28,24 @@ export async function findClauseKeywordMatchCounts(
     return new Map();
   }
 
+  // §Phase 14.2 - "latest authoritative revision only" (ai-retrieval-freshness.ts):
+  // a contract re-extracted+re-segmented leaves its PREVIOUS segmentation's
+  // clauses as live rows (never deleted, for provenance/audit reasons -
+  // see MessageCitation's own "never rewritten" rationale) - without this
+  // filter, a stale V1 clause could still surface here via a keyword-stem
+  // match even though the vector leg already excludes it.
+  const eligibleJobIds = await latestAuthoritativeClauseSegmentationJobIdsForOrganization(organizationId);
+  if (eligibleJobIds.length === 0) {
+    return new Map();
+  }
+
   const stems = [...new Set(keywords.map((keyword) => keyword.slice(0, KEYWORD_STEM_LENGTH)))];
 
   const clauses = await prisma.contractClause.findMany({
     where: {
       organizationId,
       contract: { deletedAt: null },
+      segmentationJobId: { in: eligibleJobIds },
       OR: stems.map((stem) => ({ normalizedText: { contains: stem, mode: "insensitive" as const } })),
     },
     select: { id: true, normalizedText: true },
