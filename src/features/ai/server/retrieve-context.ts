@@ -1,6 +1,8 @@
 import type { Citation } from "@/domain/ai/citation";
 import { buildChunkContext, buildContext, deduplicateByNormalizedText } from "@/domain/ai/context-builder";
 import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
+import { classifyQuestionComplexity } from "@/domain/ai/question-complexity";
+import { COMPREHENSIVE_TOP_K, DEFAULT_TOP_K } from "@/domain/ai/retrieval-config";
 
 import { hybridSearchClauses } from "./hybrid-search-clauses";
 import { hybridSearchDocumentChunks } from "./hybrid-search-document-chunks";
@@ -33,6 +35,16 @@ import { hybridSearchDocumentChunks } from "./hybrid-search-document-chunks";
  * expected outcome the hallucination guard (see
  * domain/ai/hallucination-guard.ts) must be able to detect and respond
  * "모른다" to, not an error condition.
+ *
+ * §Phase 14.1 §15 - a caller-supplied `topK` always wins (askQuestion()'s
+ * real call sites never pass one, but the evaluation CLI/tests exercise
+ * both retrieval legs directly at a fixed topK for IR-metric consistency,
+ * not through this function). Otherwise `topK` is derived from a cheap,
+ * synchronous keyword classification of the question
+ * (question-complexity.ts) - "comprehensive" gets a much wider per-leg
+ * topK, "focused" gets the existing default. No extra LLM call, no new
+ * agent/router: the classifier is a pure function, and both legs still
+ * run in exactly the same two concurrent calls as before.
  */
 export async function retrieveContext(params: {
   organizationId: string;
@@ -40,9 +52,13 @@ export async function retrieveContext(params: {
   topK?: number;
   embeddingProvider?: EmbeddingProvider;
 }): Promise<Citation[]> {
+  const topK =
+    params.topK ?? (classifyQuestionComplexity(params.question) === "comprehensive" ? COMPREHENSIVE_TOP_K : DEFAULT_TOP_K);
+  const searchParams = { ...params, topK };
+
   const [clauseResults, chunkResults] = await Promise.all([
-    hybridSearchClauses(params),
-    hybridSearchDocumentChunks(params),
+    hybridSearchClauses(searchParams),
+    hybridSearchDocumentChunks(searchParams),
   ]);
 
   const dedupedClauses = deduplicateByNormalizedText(clauseResults);
