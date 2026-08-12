@@ -8,6 +8,7 @@ import { OcrRequiredError, UnsupportedFormatError } from "@/domain/extraction/ex
 import { isValidNormalizedSuggestionValue } from "@/domain/extraction/validate-normalized-suggestion-value";
 import { AUDIT_ACTIONS } from "@/domain/shared/audit-actions";
 import { contractFieldExtractionResultSchema } from "@/lib/validation/extraction";
+import { createDocumentChunksForExtractedDocument } from "@/features/ai/server/create-document-chunks-for-extracted-document";
 import { findContractFileById } from "@/server/repositories/contract-file-repository";
 import { findContractById } from "@/server/repositories/contract-repository";
 import {
@@ -194,7 +195,7 @@ async function runClaimedJob(job: ExtractionJobRow): Promise<void> {
 
   const contentChecksum = computeChecksum(Buffer.from(extracted.text, "utf8"));
 
-  await prisma.$transaction(async (tx) => {
+  const extractedDocument = await prisma.$transaction(async (tx) => {
     // Re-processing (REVIEW_REQUIRED -> PROCESSING) clears prior
     // suggestions/document rather than keeping revision history - see
     // field-suggestion-repository.ts's deleteSuggestionsByJobId comment.
@@ -207,7 +208,7 @@ async function runClaimedJob(job: ExtractionJobRow): Promise<void> {
       await tx.contractExtractedDocument.delete({ where: { id: existingDocument.id } });
     }
 
-    await createExtractedDocument(
+    const createdDocument = await createExtractedDocument(
       {
         extractionJobId: job.id,
         organizationId: job.organizationId,
@@ -255,5 +256,27 @@ async function runClaimedJob(job: ExtractionJobRow): Promise<void> {
         },
       },
     });
+
+    return createdDocument;
   });
+
+  // §Phase 14.1 §4/§11 - best-effort, outside the transaction above (a
+  // failure here must never fail the extraction job itself - raw
+  // retrieval simply stays unavailable for this document until the next
+  // successful re-extraction or a manual re-chunk, same "never block the
+  // feature this is downstream of" discipline as
+  // enqueueEmbeddingJobsForClauses() in the segmentation job).
+  try {
+    await createDocumentChunksForExtractedDocument({
+      organizationId: job.organizationId,
+      contractId: job.contractId,
+      extractedDocumentId: extractedDocument.id,
+      text: extracted.text,
+    });
+  } catch (error) {
+    console.error(
+      `Failed to create document chunks for extraction job ${job.id}:`,
+      error instanceof Error ? error.message : error
+    );
+  }
 }

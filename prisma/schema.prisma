@@ -299,6 +299,9 @@ model Organization {
   contractClauses     ContractClause[]
   clauseEmbeddings    ClauseEmbedding[]
   embeddingJobs       EmbeddingJob[]
+  documentChunks           ContractDocumentChunk[]
+  documentChunkEmbeddings  ContractDocumentChunkEmbedding[]
+  documentChunkEmbeddingJobs ContractDocumentChunkEmbeddingJob[]
   conversations       Conversation[]
   messages            Message[]
   aiSearchPatterns    AiSearchPattern[]
@@ -379,6 +382,7 @@ model Contract {
   segmentationJobs ClauseSegmentationJob[]
   sections         ContractSection[]
   clauses          ContractClause[]
+  documentChunks   ContractDocumentChunk[]
   reviewSignals    ClauseReviewSignal[]
 
   @@index([organizationId])
@@ -675,6 +679,7 @@ model ContractExtractedDocument {
 
   extractionJob    ContractExtractionJob   @relation(fields: [extractionJobId], references: [id], onDelete: Cascade)
   segmentationJobs ClauseSegmentationJob[]
+  documentChunks   ContractDocumentChunk[]
 
   @@index([organizationId, contractId])
   @@map("contract_extracted_documents")
@@ -1233,6 +1238,133 @@ model EmbeddingJob {
   @@index([status, createdAt])
   @@index([organizationId, status])
   @@map("embedding_jobs")
+}
+
+/**
+ * §Phase 14.1 - "raw document evidence" layer, alongside ContractClause's
+ * existing "structured evidence" layer (§Dual Retrieval). A chunk is a
+ * boundary-aware (heading/paragraph/sentence, never a blind character
+ * cut - see domain/ai/document-chunker.ts) window over
+ * ContractExtractedDocument.text, produced independently of clause
+ * segmentation - deliberately so a chunk exists (and is retrievable) even
+ * when segmentation is incomplete, still pending, or missed content
+ * entirely (§Extraction Failure Resilience - "clause extraction failure
+ * != AI knowledge failure"). One row per (extractedDocumentId,
+ * chunkIndex) - re-chunking (e.g. after a chunker version bump) replaces
+ * the prior generation's rows for that document rather than versioning
+ * in place, mirroring how re-extraction/re-segmentation already work in
+ * this codebase.
+ *
+ * sourcePageStart/sourcePageEnd are honestly nullable and always null
+ * today, exactly like ContractClause's identically-named, identically
+ * unpopulated columns - pdf-parse's extracted text has no page-boundary
+ * markers surviving into ContractExtractedDocument.text once
+ * concatenated, and mammoth (.docx) has no page concept at all. Never
+ * fabricate a page number here.
+ */
+model ContractDocumentChunk {
+  id                  String  @id @default(cuid())
+  organizationId      String
+  contractId          String
+  extractedDocumentId String
+  chunkIndex          Int
+  text                String
+  /**
+   * Search-normalized copy of `text` (same whitespace/quote/case
+   * normalization as ContractClause.normalizedText - see
+   * domain/clauses/normalize-clause-text.ts, reused as-is).
+   */
+  normalizedText      String
+  /** Real token count (gpt-tokenizer, cl100k_base) at chunk-build time - what token-budget context selection actually sums, never re-estimated from character length. */
+  tokenCount          Int
+  /** Character offsets into ContractExtractedDocument.text - document.text.slice(startOffset, endOffset) must equal `text` (same invariant as ContractSection/ContractClause, see domain/ai/document-chunker.ts). */
+  startOffset         Int
+  endOffset           Int
+  /** Nearest preceding detected heading/article-number line (e.g. "제9조(비밀유지)"), if any - purely a citation-readability aid, never used for filtering. */
+  headingContext      String?
+  sourcePageStart     Int?
+  sourcePageEnd       Int?
+  /** Chunking algorithm version - a future chunker change re-chunks rather than silently mixing chunk shapes within one document; also part of the retrieval cache key. */
+  chunkerVersion      String
+  createdAt           DateTime @default(now())
+
+  organization      Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contract          Contract                  @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  extractedDocument ContractExtractedDocument @relation(fields: [extractedDocumentId], references: [id], onDelete: Cascade)
+  embeddings        ContractDocumentChunkEmbedding[]
+  embeddingJobs     ContractDocumentChunkEmbeddingJob[]
+
+  @@unique([extractedDocumentId, chunkIndex])
+  @@index([organizationId, contractId])
+  @@map("contract_document_chunks")
+}
+
+/** Same FOR UPDATE SKIP LOCKED claim shape as EmbeddingJob - reuses EmbeddingJobStatus rather than a parallel enum. inputChecksum is the chunk's normalizedText hash at enqueue time. */
+model ContractDocumentChunkEmbeddingJob {
+  id             String             @id @default(cuid())
+  organizationId String
+  chunkId        String
+  status         EmbeddingJobStatus @default(PENDING)
+  attempt        Int                @default(0)
+  maxAttempts    Int                @default(3)
+  inputChecksum  String
+  provider       String?
+  model          String?
+
+  lockedAt DateTime?
+  lockedBy String?
+
+  startedAt    DateTime?
+  completedAt  DateTime?
+  failedAt     DateTime?
+  errorCode    String?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  chunk        ContractDocumentChunk  @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@unique([chunkId, inputChecksum])
+  @@index([status, createdAt])
+  @@index([organizationId, status])
+  @@map("contract_document_chunk_embedding_jobs")
+}
+
+/**
+ * Mirrors ClauseEmbedding's exact shape (production embedding config -
+ * OpenAI text-embedding-3-small, dimension=256 - is NOT changed by this
+ * phase, only reused). `vectorNative` is `Unsupported("vector(256)")`
+ * for the identical reason ClauseEmbedding's is - see this migration's
+ * hand-written raw SQL for the HNSW index (Prisma cannot emit DDL for
+ * this column type, and `prisma migrate dev` re-run later can silently
+ * DROP a Prisma-invisible index via drift-correction - see
+ * docs/operations/ai-platform.md's "prisma migrate dev와 pgvector HNSW
+ * index" before ever re-running `migrate dev` against this schema).
+ */
+model ContractDocumentChunkEmbedding {
+  id               String                      @id @default(cuid())
+  organizationId   String
+  chunkId          String
+  provider         String
+  model            String
+  dimension        Int
+  vector           Float[]
+  vectorNative     Unsupported("vector(256)")?
+  /** SHA-256 of the chunk's normalizedText at generation time - staleness signal, same pattern as ClauseEmbedding.checksum. */
+  checksum         String
+  embeddingVersion Int                         @default(1)
+  isLatest         Boolean                     @default(true)
+  createdAt        DateTime                    @default(now())
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  chunk        ContractDocumentChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@unique([chunkId, embeddingVersion])
+  @@index([organizationId, chunkId, isLatest])
+  @@index([organizationId, isLatest])
+  @@map("contract_document_chunk_embeddings")
 }
 
 enum ConversationRole {

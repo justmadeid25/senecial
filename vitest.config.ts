@@ -26,6 +26,9 @@ const QUEUE_TEST_FILES = [
   // fixture setup) AND claimNextPendingEmbeddingJob()/processNextEmbeddingJob()'s
   // own globally-oldest-PENDING-row claim.
   "tests/integration/embedding-pipeline.test.ts",
+  // §Phase 14.1 - same globally-oldest-PENDING-row claim shape via
+  // processNextExtractionJob()/processNextChunkEmbeddingJob().
+  "tests/integration/document-chunk-embedding-pipeline.test.ts",
   "tests/integration/hybrid-search.test.ts",
   "tests/integration/similar-clause-and-ai-review.test.ts",
   "tests/integration/ai-search-pattern.test.ts",
