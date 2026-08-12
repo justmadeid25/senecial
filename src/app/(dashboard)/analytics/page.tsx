@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { BarChart3 } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AMOUNT_BASIS_NOTE, RECURRING_DIFFERENCE_NOTE, STALE_SIGNAL_NOTE } from "@/domain/analytics/labels";
 import { ANALYTICS_FILTER_KEY_LABELS } from "@/domain/analytics/filter-labels";
@@ -187,8 +191,17 @@ export default async function AnalyticsPage({
 
       {portfolio.totalLive === 0 && !hasActiveFilters ? (
         <Card>
-          <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            아직 등록된 계약이 없습니다. 계약을 등록하면 이곳에 분석 결과가 표시됩니다.
+          <CardContent>
+            <EmptyState
+              icon={BarChart3}
+              title="아직 등록된 계약이 없습니다"
+              description="계약을 등록하면 포트폴리오 현황, 만료 예정, 조항 유형 분포 등 분석 결과가 이곳에 표시됩니다."
+              action={
+                <Button nativeButton={false} render={<Link href="/contracts/new" />} variant="outline">
+                  첫 계약 등록하기
+                </Button>
+              }
+            />
           </CardContent>
         </Card>
       ) : (
