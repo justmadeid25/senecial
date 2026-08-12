@@ -70,6 +70,24 @@ export default defineConfig({
           environment: "node",
           include: ["tests/**/*.test.ts"],
           exclude: QUEUE_TEST_FILES,
+          // Phase 14 Part 8 (release gate) - REAL bug found and fixed here:
+          // this host has 16 CPU cores, so vitest's default fork pool ran
+          // up to 16 worker processes for this project - each importing
+          // src/server/db/client.ts and getting its OWN @prisma/adapter-pg
+          // pg.Pool (default max: 10 connections). 16 workers x up to 10
+          // connections each can exceed Postgres's own max_connections=100
+          // (confirmed: `SHOW max_connections` on the real test DB), and
+          // DOES intermittently - caught live via a real `pnpm test` run
+          // where a DIFFERENT, seemingly-unrelated test failed
+          // (retention-purge.test.ts's upsert "record required but not
+          // found") on a re-run, after an EARLIER run failed a completely
+          // different file (embedding-provider-guard.test.ts) - the
+          // shifting, unrelated-looking failure identity across runs is
+          // the signature of connection-pool exhaustion, not a logic bug
+          // in any one test. Capped well under max_connections so this
+          // project's peak simultaneous connections (workers x pool size)
+          // stays safely bounded regardless of host CPU count.
+          maxWorkers: 6,
           testTimeout: 20000,
           // §Phase 12.4 §11 - matches testTimeout, not vitest's 10s default.
           // beforeAll/afterAll hooks run real Postgres creates/deletes under
