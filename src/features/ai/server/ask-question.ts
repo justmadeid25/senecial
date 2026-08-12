@@ -13,6 +13,7 @@ import type { LlmMessage, LlmProvider } from "@/domain/ai/llm-provider";
 import { estimateAiCostMinor } from "@/domain/ai/pricing";
 import { buildPromptMessages, PROMPT_TEMPLATE_VERSION } from "@/domain/ai/prompt-builder";
 import { normalizeProviderError } from "@/domain/ai/provider-error";
+import { classifyQuestionComplexity } from "@/domain/ai/question-complexity";
 import { getCacheProvider, getCacheStampedeLock } from "@/server/services/ai/cache/get-cache-provider";
 import { withDistributedLockOrCompute } from "@/server/services/ai/cache/distributed-lock";
 import { withInFlightDeduplication } from "@/server/services/ai/cache/in-flight-deduplication";
@@ -191,7 +192,7 @@ export async function askQuestion(params: { organizationId: string; question: st
       question: params.question,
       embeddingProvider: embeddingSelection.provider,
     });
-    const guard = checkEvidenceSufficiency(citations);
+    const guard = checkEvidenceSufficiency(citations, classifyQuestionComplexity(params.question));
 
     if (!guard.sufficient) {
       await recordAiSearchPatterns({ organizationId: params.organizationId, question: params.question, citedClauseIds: [] });
@@ -350,7 +351,7 @@ export async function* askQuestionStreaming(params: {
       question: params.question,
       embeddingProvider: embeddingSelection.provider,
     });
-    const guard = checkEvidenceSufficiency(citations);
+    const guard = checkEvidenceSufficiency(citations, classifyQuestionComplexity(params.question));
 
     if (!guard.sufficient) {
       await recordAiSearchPatterns({ organizationId: params.organizationId, question: params.question, citedClauseIds: [] });

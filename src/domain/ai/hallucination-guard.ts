@@ -1,4 +1,5 @@
 import type { Citation } from "./citation";
+import type { QuestionComplexity } from "./question-complexity";
 
 /**
  * §Hallucination Guard - "답변 생성 전 근거 개수 확인, 근거 부족 → 모른다고
@@ -26,6 +27,29 @@ export const MIN_CITATION_SCORE = Number(process.env.AI_MIN_CITATION_SCORE ?? "0
 export const MIN_CITATION_COUNT = Number(process.env.AI_MIN_CITATION_COUNT ?? "1");
 
 /**
+ * §Phase 14.1 §12 - a SEPARATE, lower bar for a question classified
+ * "comprehensive" (question-complexity.ts). `MIN_CITATION_SCORE` above was
+ * calibrated against FOCUSED single-fact questions, where one query
+ * embedding closely matches one specific clause. A comprehensive review
+ * question ("이 계약의 위험 조항을 모두 검토해줘") embeds as one broad,
+ * topically-diluted vector - real, relevant evidence scattered across many
+ * unrelated articles scores meaningfully LOWER against that single blended
+ * vector than the same evidence would against its own focused question,
+ * even though it is still genuine (not noise). Measured directly building
+ * this feature (tests/integration/ai-comprehensive-review-coverage.test.ts):
+ * a synthetic contract with 7 risk clauses scattered among 14 boilerplate
+ * ones - COMPREHENSIVE_TOP_K's wider candidate pool found 6/7 in the raw
+ * retrieval, but the original single MIN_CITATION_SCORE=0.15 gate then
+ * dropped legitimate risk-clause scores as low as 0.116-0.146, keeping
+ * only 2/7 in the final answer. 0.10 is the real, measured value that
+ * keeps that fixture's genuine scattered evidence without needing a
+ * second LLM call or query decomposition - just a threshold appropriate to
+ * this question SHAPE. `MIN_CITATION_SCORE` itself is untouched, so a
+ * focused question's hallucination-guard strictness never weakens.
+ */
+export const MIN_CITATION_SCORE_COMPREHENSIVE = Number(process.env.AI_MIN_CITATION_SCORE_COMPREHENSIVE ?? "0.10");
+
+/**
  * §Phase 12.2 Part C - identifies which version of this guard's DECISION
  * LOGIC (not just its threshold values, which are already captured
  * separately as MIN_CITATION_SCORE/MIN_CITATION_COUNT) is live. Bump only
@@ -43,8 +67,17 @@ export interface EvidenceSufficiencyResult {
   strongCitations: Citation[];
 }
 
-/** Pure - never touches the DB/LLM itself, only decides based on scores already computed by retrieval. */
-export function checkEvidenceSufficiency(citations: readonly Citation[]): EvidenceSufficiencyResult {
-  const strongCitations = citations.filter((citation) => citation.score >= MIN_CITATION_SCORE);
+/**
+ * Pure - never touches the DB/LLM itself, only decides based on scores
+ * already computed by retrieval. `complexity` defaults to "focused" (the
+ * original, unchanged behavior) - only a caller that has actually
+ * classified the question as "comprehensive" gets the relaxed threshold.
+ */
+export function checkEvidenceSufficiency(
+  citations: readonly Citation[],
+  complexity: QuestionComplexity = "focused"
+): EvidenceSufficiencyResult {
+  const threshold = complexity === "comprehensive" ? MIN_CITATION_SCORE_COMPREHENSIVE : MIN_CITATION_SCORE;
+  const strongCitations = citations.filter((citation) => citation.score >= threshold);
   return { sufficient: strongCitations.length >= MIN_CITATION_COUNT, strongCitations };
 }

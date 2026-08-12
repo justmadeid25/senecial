@@ -24,21 +24,27 @@ export const QUESTION_COMPLEXITY_VERSION = "keyword-heuristic-v1";
  * is exactly the failure §12 exists to catch). Korean legal-contract-review
  * request phrasing, not a general-purpose "is this a big question"
  * detector.
+ *
+ * Deliberately standalone keywords, not adjacency-bound phrases
+ * (e.g. NOT `/모든\s*조항/`) - real questions put the scope word and the
+ * review verb anywhere in the sentence ("이 계약에서 위험할 수 있는 조항을
+ * 모두 검토해줘" has "위험"...조항...모두...검토 in that order, nowhere
+ * adjacent) - see tests/unit/question-complexity.test.ts /
+ * ai-comprehensive-review-coverage.test.ts's real question phrasing, which
+ * is exactly what caught the original adjacency-bound version missing this.
  */
-const COMPREHENSIVE_SIGNAL_PATTERNS: readonly RegExp[] = [
-  /모든\s*(조항|위험|리스크)/,
-  /전체\s*(조항|계약|검토|요약)/,
-  /전반적/,
-  /전수\s*(검토|조사)/,
-  /포괄적/,
-  /위험\s*(조항|요소|사항).{0,10}(검토|분석|찾아|알려)/,
-  /계약(서)?\s*(전체를?|전반을?).{0,10}(검토|분석|요약|리뷰)/,
-  /리뷰해\s*줘/,
-  /요약해\s*줘/,
-  /빠짐없이/,
-  /어떤\s*위험/,
+const COMPREHENSIVE_SIGNAL_KEYWORDS: readonly string[] = [
+  "모든",
+  "모두",
+  "전체",
+  "전반",
+  "전수",
+  "포괄적",
+  "빠짐없이",
+  "리뷰해",
+  "요약해",
 ];
 
 export function classifyQuestionComplexity(question: string): QuestionComplexity {
-  return COMPREHENSIVE_SIGNAL_PATTERNS.some((pattern) => pattern.test(question)) ? "comprehensive" : "focused";
+  return COMPREHENSIVE_SIGNAL_KEYWORDS.some((keyword) => question.includes(keyword)) ? "comprehensive" : "focused";
 }
