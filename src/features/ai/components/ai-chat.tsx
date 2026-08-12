@@ -187,7 +187,7 @@ export function AiChat() {
                           render={
                             <Link
                               href={`/contracts/${citation.contractId}`}
-                              className="inline-flex items-center gap-1 rounded-full border border-border bg-accent/50 px-2 py-0.5 text-xs text-accent-foreground transition-colors duration-[--duration-micro] hover:border-primary/40 hover:bg-accent"
+                              className="inline-flex items-center gap-1 rounded-full border border-border bg-accent/50 px-2 py-0.5 text-xs text-accent-foreground outline-none transition-colors duration-[--duration-micro] hover:border-primary/40 hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
                             />
                           }
                         >

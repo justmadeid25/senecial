@@ -63,7 +63,7 @@ export function DashboardNav({ unreadCount }: { unreadCount: number }) {
             href={item.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors duration-[--duration-micro]",
+              "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors duration-[--duration-micro] outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
               active
                 ? "bg-accent text-accent-foreground"
                 : "text-foreground/80 hover:bg-muted hover:text-foreground"
@@ -86,7 +86,7 @@ export function DashboardNav({ unreadCount }: { unreadCount: number }) {
             href={item.href}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors duration-[--duration-micro]",
+              "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors duration-[--duration-micro] outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
               active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
             )}
           >

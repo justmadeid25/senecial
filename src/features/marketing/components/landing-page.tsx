@@ -45,7 +45,7 @@ export function LandingPage() {
         <div className="landing-ambient-field absolute left-1/2 top-[-220px] h-[620px] w-[900px] rounded-full opacity-[0.16] blur-3xl" />
       </div>
 
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
+      <header className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-y-2 px-6 py-6">
         <span className="text-sm font-semibold tracking-tight text-foreground">Senecial</span>
         <nav className="flex items-center gap-2">
           <Button variant="ghost" nativeButton={false} render={<Link href="/login" />}>
