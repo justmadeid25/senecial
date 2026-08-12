@@ -100,6 +100,9 @@ let staleEmbeddingCount = 0;
 let contextTruncationTotal = 0;
 /** §Phase 14.1 §5/§19 - real per-request context token usage (domain/ai/context-token-budget.ts's packCitationsWithinTokenBudget), never an estimate - the exact tokenized size of the system+user prompt actually sent to the LLM. */
 const contextTokenUsage = newSummary();
+/** §Phase 14.1 §19 - how many of the FINAL (post-token-budget) citations in a request came from each evidence type - never per-request/per-org, just the two running totals, same low-cardinality discipline as everything else in this file. Lets a dashboard show whether the chunk leg is actually contributing evidence in production, not just in tests. */
+let clauseCitationsTotal = 0;
+let chunkCitationsTotal = 0;
 /** §Phase 12.2 Part E - per-operation latency budget violations, keyed by the same dependency names as dependencyLatencies above (a stricter bar than SLOW_THRESHOLD_MS - see domain/ai/latency-budget.ts). */
 const latencyBudgetExceededTotal = new Map<string, number>();
 /** §Phase 12.2 Part E (§33 concurrency) - current in-flight AI requests, process-wide. A gauge, not a counter. */
@@ -317,6 +320,12 @@ export function recordContextTokenUsage(tokens: number): void {
   addSample(contextTokenUsage, tokens);
 }
 
+/** §Phase 14.1 §19 - the evidence-type distribution of one request's FINAL citations (post-token-budget), one call per request with the counts already tallied - never one call per citation. */
+export function recordEvidenceDistribution(counts: { clause: number; chunk: number }): void {
+  clauseCitationsTotal += counts.clause;
+  chunkCitationsTotal += counts.chunk;
+}
+
 /** §Phase 12.2 Part E - a dependency call exceeded its NAMED p95 budget (domain/ai/latency-budget.ts), stricter/more specific than the blanket SLOW_THRESHOLD_MS warn log. */
 export function recordLatencyBudgetExceeded(operation: string): void {
   latencyBudgetExceededTotal.set(operation, (latencyBudgetExceededTotal.get(operation) ?? 0) + 1);
@@ -487,6 +496,11 @@ export function renderPrometheusMetrics(): string {
   lines.push(`senecial_ai_context_token_usage_count ${contextTokenUsage.count}`);
   lines.push(`senecial_ai_context_token_usage_sum ${contextTokenUsage.sum}`);
   lines.push(`senecial_ai_context_token_usage_max ${contextTokenUsage.max}`);
+
+  lines.push("# HELP senecial_ai_evidence_citations_total Final (post-token-budget) citations actually sent to the LLM, by evidence type.");
+  lines.push("# TYPE senecial_ai_evidence_citations_total counter");
+  lines.push(`senecial_ai_evidence_citations_total{evidenceType="clause"} ${clauseCitationsTotal}`);
+  lines.push(`senecial_ai_evidence_citations_total{evidenceType="chunk"} ${chunkCitationsTotal}`);
 
   lines.push("# HELP senecial_ai_latency_budget_exceeded_total Dependency calls that exceeded their named per-operation latency budget.");
   lines.push("# TYPE senecial_ai_latency_budget_exceeded_total counter");

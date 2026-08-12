@@ -25,6 +25,7 @@ import {
   recordContextTokenUsage,
   recordContextTruncation,
   recordDependencyLatency,
+  recordEvidenceDistribution,
   recordLatencyBudgetExceeded,
   recordLlmUsage,
 } from "@/server/monitoring/metrics";
@@ -85,6 +86,10 @@ function applyContextBudget(question: string, citations: Citation[]): Citation[]
     recordContextTruncation();
   }
   recordContextTokenUsage(totalContextTokens);
+  recordEvidenceDistribution({
+    clause: kept.filter((c) => c.evidenceType === "clause").length,
+    chunk: kept.filter((c) => c.evidenceType === "chunk").length,
+  });
   return kept;
 }
 
