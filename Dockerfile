@@ -1,22 +1,41 @@
-# Senecial - production Dockerfile (Phase 9 §37, Phase 11 runtime fixes)
+# Senecial - production Dockerfile (Phase 9 §37, Phase 11 runtime fixes,
+# Phase 14 Part 1 real docker build/run verification)
 #
 # Multi-stage build producing a minimal runtime image via Next.js
-# `output: "standalone"` (next.config.ts). Verified in this repository (no
-# `docker` CLI available in this sandbox - see README's "환경 관련
-# 특이사항") by actually running `node .next/standalone/server.js` with the
-# exact same file layout this Dockerfile's `runner` stage produces
-# (standalone dir + .next/static + public copied alongside it): confirmed
-# it boots, /api/health/live and /api/health/ready respond correctly
-# (including the new `batch`/`version`/`buildDate` fields), `/api/metrics`
-# returns real Prometheus output, and - critically - that the Phase 11
-# startup-config-validation hook (instrumentation.ts) actually runs and
-# correctly rejects startup on a bad production config (verified both the
-# reject path and the pass path for real). This exact drill is also what
-# caught the missing-instrumentation-chunk bug fixed by
-# `docker-copy-instrumentation.mjs` below - `docker build` itself has still
-# not been run end-to-end (no docker CLI here), so verify that once in an
-# environment that has it, but every runtime behavior this Dockerfile's
-# `runner` stage's output actually serves has been.
+# `output: "standalone"` (next.config.ts).
+#
+# Phase 14 Part 1 - `docker build`/`docker compose --profile smoke up`
+# HAVE now been run end-to-end for real (a `docker` CLI is available in
+# this environment), not just the `node .next/standalone/server.js`
+# same-file-layout approximation described below. That real run found and
+# fixed an actual production-blocking bug this approximation could not
+# have caught: Next.js 16's standalone file-tracer (Turbopack) does not
+# preserve pnpm's isolated node_modules layout for externalized packages
+# (`pg`, the Prisma 7 generated client) - their own transitive
+# dependencies (`pg-types`, `pg-connection-string`, `pg-pool`,
+# `pg-protocol`, `pgpass`, `pg-int8`, `postgres-array`, `postgres-bytea`,
+# `postgres-date`, `postgres-interval`, `split2`, `xtend`,
+# `@prisma/client-runtime-utils`) were silently absent from the built
+# image, and the container crashed on every startup with
+# `Cannot find module '...'` before ever reaching instrumentation.ts.
+# Fixed by declaring each as an explicit direct dependency in
+# package.json (pnpm then symlinks them at the project's top-level
+# node_modules, where both the tracer and the runtime's module resolution
+# actually look) - never delete these without re-running a real
+# `docker build` + `docker compose --profile smoke up` + smoke test to
+# confirm a future dependency/Next.js/pnpm upgrade hasn't reintroduced the
+# gap.
+#
+# Verified for real in that same session: the image boots, `/api/health/live`
+# and `/api/health/ready` respond correctly (including `batch`/`version`/
+# `buildDate`), the Phase 11 startup-config-validation hook
+# (instrumentation.ts) runs and correctly rejects a bad production config
+# (non-HTTPS URLs, dev AI providers, unencrypted backup, in-memory cache -
+# all real FAILs) as well as passes cleanly against a real config (real
+# OpenAI key, Redis-backed cache, real `age` backup encryption), and the
+# full golden-path E2E (tests/e2e/smoke.spec.ts: signup -> login ->
+# contract -> upload -> download -> analytics) passes against the actual
+# containerized image, not just a dev server.
 #
 # Base image is `node:22-bookworm-slim` (Debian/glibc), not
 # `node:22-alpine` (musl libc) - @node-rs/argon2 (src/server/auth/

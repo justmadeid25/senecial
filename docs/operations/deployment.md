@@ -58,7 +58,7 @@ docker run -d \
   senecial:latest
 ```
 
-이 저장소 환경에는 `docker` CLI가 없어 `docker build`를 직접 실행해 검증하지 못했습니다 — `node .next/standalone/server.js`를 직접 실행해 산출물 자체는 정상 동작함을 확인했습니다 (README의 "환경 관련 특이사항" 참고). 실제 배포 전 별도 환경(또는 아래 CI/CD의 `docker.yml`/GitHub-hosted runner)에서 `docker build`/`docker run`을 먼저 검증하십시오.
+(Phase 14 Part 1) `docker build` + `docker compose --profile smoke up` + 실제 golden-path E2E(`tests/e2e/smoke.spec.ts`)까지 이 환경에서 실제로 실행해 검증했습니다. 그 실행에서 실제 프로덕션 차단급 버그를 하나 발견해 고쳤습니다: Next.js 16 standalone file-tracer(Turbopack)가 pnpm의 격리된 node_modules 레이아웃을 그대로 보존하지 못해, externalize된 패키지(`pg`, Prisma 7 생성 클라이언트)의 전이 의존성들이 빌드된 이미지에서 누락되어 있었고 — 컨테이너가 매번 시작 즉시 `Cannot find module '...'`로 크래시했습니다(Dockerfile 상단 주석 참고). `package.json`에 해당 패키지들을 명시적 직접 의존성으로 선언해 고쳤습니다. 앞으로 의존성/Next.js/pnpm을 업그레이드할 때는 반드시 실제 `docker build` + `docker compose --profile smoke up` + smoke test를 다시 실행해 이 문제가 재발하지 않았는지 확인하십시오 — `node .next/standalone/server.js`만으로는 이 클래스의 버그를 잡을 수 없습니다(이번에 실제로 놓쳤던 사례).
 
 ### Docker Compose 기반 로컬 runtime smoke (Phase 10C)
 
