@@ -38,6 +38,28 @@ const QUEUE_TEST_FILES = [
   "tests/integration/vector-search-revision-and-staleness.test.ts",
 ];
 
+/**
+ * Phase 14 Part 8 (release gate) - REAL flakiness found and fixed here: a
+ * bare `vitest run` (no --project filter) runs the "default" and "queue"
+ * projects below CONCURRENTLY against each other - `fileParallelism:
+ * false` on "queue" only serializes files WITHIN that project, it does
+ * nothing to stop "default"'s own many parallel workers from hitting the
+ * same real Postgres/Redis at the same time as "queue"'s tests. Caught
+ * live during a real `pnpm release:verify` run: 40 tests failed (mostly
+ * every AI/embedding/vector integration test, plus two unrelated
+ * `|default|`-project tests) with symptoms like "expected data, got
+ * empty/zero" and mismatched error messages - classic cross-project DB
+ * contention, not a code regression (every one of those same tests passed
+ * cleanly, individually and combined, when the SAME suite was re-run
+ * `--project=default` then `--project=queue` sequentially, and even a
+ * later bare `vitest run` passed clean once system load had settled -
+ * confirming this is real, intermittent, LOAD-dependent flakiness, exactly
+ * the kind a busier/more resource-constrained CI runner is more likely to
+ * hit, not less). `package.json`'s `test` script now runs
+ * `--project=default` and `--project=queue` as two separate SEQUENTIAL
+ * vitest invocations rather than one bare `vitest run` - do not revert
+ * that without re-verifying this contention is gone some other way first.
+ */
 export default defineConfig({
   test: {
     projects: [

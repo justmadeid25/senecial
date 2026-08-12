@@ -14,7 +14,7 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed": "prisma db seed",
-    "test": "dotenv -e .env.test -- prisma migrate deploy && dotenv -e .env.test -- vitest run",
+    "test": "dotenv -e .env.test -- prisma migrate deploy && dotenv -e .env.test -- vitest run --project=default && dotenv -e .env.test -- vitest run --project=queue",
     "test:unit": "vitest run tests/unit",
     "test:e2e": "pnpm test:e2e:prod",
     "test:e2e:dev": "dotenv -e .env.e2e -- tsx scripts/e2e-db-reset.ts && dotenv -e .env.e2e -- playwright test --project=e2e-default --project=e2e-queue",
