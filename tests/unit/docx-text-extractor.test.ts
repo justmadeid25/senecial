@@ -1,8 +1,37 @@
 import { Document, Packer, Paragraph, Table, TableCell, TableRow } from "docx";
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import { TextExtractionFailedError } from "@/domain/extraction/extraction-errors";
+import { TextExtractionFailedError, UnsupportedFormatError } from "@/domain/extraction/extraction-errors";
 import { DocxTextExtractor } from "@/server/services/extraction/docx-text-extractor";
+
+/**
+ * Phase 14 Part 6 (security - decompression bomb). A real ~1.2MB DOCX
+ * built this same way (larger N) decompressed to ~500MB and crashed the
+ * real extraction worker process outright when handed to mammoth - see
+ * docx-text-extractor.ts's own comment. This builds a much smaller
+ * version of the identical technique (still comfortably over the 100MB
+ * guard) so the test itself stays fast.
+ */
+async function buildDecompressionBombDocxBuffer(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`
+  );
+  zip.folder("_rels")!.file(
+    ".rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`
+  );
+  const paragraph = `<w:p><w:r><w:t>${"A".repeat(1000)}</w:t></w:r></w:p>`;
+  const chunks = [
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>`,
+  ];
+  for (let i = 0; i < 150_000; i++) chunks.push(paragraph); // ~150MB decompressed, well over the 100MB guard
+  chunks.push(`</w:body></w:document>`);
+  zip.folder("word")!.file("document.xml", chunks.join(""), { compression: "DEFLATE", compressionOptions: { level: 9 } });
+  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 9 } });
+}
 
 async function buildBodyContractDocxBuffer(): Promise<Buffer> {
   const doc = new Document({
@@ -89,5 +118,12 @@ describe("DocxTextExtractor", () => {
     const extractor = new DocxTextExtractor();
     const buffer = Buffer.from("this is not a valid docx/zip file, just garbage bytes", "utf8");
     await expect(extractor.extract({ buffer })).rejects.toThrow(TextExtractionFailedError);
+  });
+
+  it("rejects a decompression bomb (small on disk, huge decompressed) as UnsupportedFormatError instead of crashing", async () => {
+    const extractor = new DocxTextExtractor();
+    const buffer = await buildDecompressionBombDocxBuffer();
+    expect(buffer.length).toBeLessThan(2 * 1024 * 1024); // small compressed size - the whole point of the attack
+    await expect(extractor.extract({ buffer })).rejects.toBeInstanceOf(UnsupportedFormatError);
   });
 });
