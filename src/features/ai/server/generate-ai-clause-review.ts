@@ -54,7 +54,9 @@ function buildReviewCitations(params: {
 }): Citation[] {
   const citations: Citation[] = [
     {
+      evidenceType: "clause",
       contractClauseId: params.clause.id,
+      chunkId: null,
       contractId: params.clause.contractId,
       contractTitle: params.contractTitle,
       clauseReference: params.clause.clauseNumber ?? params.clause.title ?? "조항 번호 미상",
@@ -65,7 +67,9 @@ function buildReviewCitations(params: {
 
   if (params.standard) {
     citations.push({
+      evidenceType: "clause",
       contractClauseId: params.clause.id,
+      chunkId: null,
       contractId: params.clause.contractId,
       contractTitle: `조직 기준 조항 - ${params.standard.name}`,
       clauseReference: CLAUSE_TYPE_LABELS[params.standard.clauseType],
@@ -76,7 +80,9 @@ function buildReviewCitations(params: {
 
   for (const similar of params.similarClauses.slice(0, MAX_SIMILAR_CITATIONS)) {
     citations.push({
+      evidenceType: "clause",
       contractClauseId: similar.contractClauseId,
+      chunkId: null,
       contractId: similar.contractId,
       contractTitle: similar.contractTitle,
       clauseReference: similar.clauseNumber ?? similar.title ?? "조항 번호 미상",

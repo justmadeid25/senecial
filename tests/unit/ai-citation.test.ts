@@ -77,7 +77,9 @@ describe("deduplicateByNormalizedText (Phase 12 Part C §Deduplicate)", () => {
 
 describe("assertCitationsPresent (Phase 12 Part F §Citation Required)", () => {
   const validCitation: Citation = {
+    evidenceType: "clause",
     contractClauseId: "c1",
+    chunkId: null,
     contractId: "k1",
     contractTitle: "테스트 계약",
     clauseReference: "제3조",

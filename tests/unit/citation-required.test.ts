@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { Citation } from "@/domain/ai/citation";
+import type { ClauseCitation } from "@/domain/ai/citation";
 import { assertEveryParagraphHasCitation } from "@/domain/ai/citation-required";
 
-function buildCitation(overrides: Partial<Citation> = {}): Citation {
+function buildCitation(overrides: Partial<ClauseCitation> = {}): ClauseCitation {
   return {
+    evidenceType: "clause",
     contractClauseId: "clause-1",
+    chunkId: null,
     contractId: "contract-1",
     contractTitle: "테스트 계약서",
     clauseReference: "제1조",

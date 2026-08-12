@@ -7,7 +7,9 @@ import { DeterministicDevelopmentLlmProvider } from "@/server/services/ai/determ
 
 const CITATIONS: Citation[] = [
   {
+    evidenceType: "clause",
     contractClauseId: "c1",
+    chunkId: null,
     contractId: "k1",
     contractTitle: "테스트 계약",
     clauseReference: "제1조",
@@ -15,7 +17,9 @@ const CITATIONS: Citation[] = [
     score: 0.9,
   },
   {
+    evidenceType: "clause",
     contractClauseId: "c2",
+    chunkId: null,
     contractId: "k1",
     contractTitle: "테스트 계약",
     clauseReference: "제2조",

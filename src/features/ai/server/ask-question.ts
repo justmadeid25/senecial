@@ -193,7 +193,7 @@ export async function askQuestion(params: { organizationId: string; question: st
     await recordAiSearchPatterns({
       organizationId: params.organizationId,
       question: params.question,
-      citedClauseIds: contextCitations.map((citation) => citation.contractClauseId),
+      citedClauseIds: contextCitations.map((citation) => citation.contractClauseId).filter((id) => id !== null),
     });
 
     const messages = buildPromptMessages(params.question, contextCitations);
@@ -355,7 +355,7 @@ export async function* askQuestionStreaming(params: {
     await recordAiSearchPatterns({
       organizationId: params.organizationId,
       question: params.question,
-      citedClauseIds: contextCitations.map((citation) => citation.contractClauseId),
+      citedClauseIds: contextCitations.map((citation) => citation.contractClauseId).filter((id) => id !== null),
     });
 
     yield { type: "citations", citations: contextCitations };
