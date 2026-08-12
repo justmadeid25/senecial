@@ -152,7 +152,7 @@ async function hybridSearchClausesUncached(params: {
   const exactPhraseMatchIds = new Set<string>();
   if (normalizedQuestion.length > 0 && merged.length > 0) {
     const candidateClauses = await prisma.contractClause.findMany({
-      where: { id: { in: merged.map((c) => c.contractClauseId) } },
+      where: { id: { in: merged.map((c) => c.contractClauseId) }, organizationId },
       select: { id: true, normalizedText: true },
     });
     for (const clause of candidateClauses) {
