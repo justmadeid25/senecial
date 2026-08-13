@@ -204,6 +204,7 @@ model User {
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
   conversations           Conversation[]
+  feedback                Feedback[]
 
   @@map("users")
 }
@@ -306,6 +307,7 @@ model Organization {
   messages            Message[]
   aiSearchPatterns    AiSearchPattern[]
   aiUsageRecords      AiUsageRecord[]
+  feedback            Feedback[]
 
   @@map("organizations")
 }
@@ -1562,4 +1564,47 @@ model AiUsageRecord {
   @@index([provider, model, createdAt])
   @@index([operationType, createdAt])
   @@map("ai_usage_records")
+}
+
+/**
+ * §Phase 15.1 Part 6 - Closed Beta feedback. Deliberately the smallest
+ * useful shape: one free-text message plus a closed-vocabulary category
+ * and a privacy-safe location (route/context string), never any contract
+ * content. `message` is server-validated/truncated (see
+ * lib/validation/feedback.ts) well below this column's ceiling - the
+ * ceiling itself is just a hard backstop against unbounded input.
+ *
+ * `contractId` is a plain string reference WITHOUT a foreign key,
+ * matching MessageCitation.contractClauseId/AiUsageRecord.conversationId's
+ * existing pattern in this schema - a later contract purge must never
+ * cascade-delete (or be blocked by) a feedback row, and Feedback must
+ * never widen what a contract's own onDelete cascade is allowed to touch.
+ * Ownership is verified at write time only (create-feedback.ts); once
+ * written, a Feedback row is immutable and write-only for MEMBER/OWNER
+ * (§Part 7 - "write-only for ordinary users").
+ */
+model Feedback {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String
+  category       FeedbackCategory
+  /** A route/screen identifier the client already knows (e.g. "/contracts/[id]", "/ai") - never a full URL with query params that could embed a search term or other user-entered text. */
+  routeContext   String?          @db.VarChar(200)
+  contractId     String?
+  message        String           @db.VarChar(2000)
+  createdAt      DateTime         @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@map("feedback")
+}
+
+enum FeedbackCategory {
+  CONFUSING_UX
+  ERROR_ENCOUNTERED
+  AI_ANSWER_SEEMS_WRONG
+  CITATION_SEEMS_WRONG
+  OTHER
 }

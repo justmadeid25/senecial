@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { EmailVerificationBanner } from "@/features/account-security/components/email-verification-banner";
 import { logoutAction } from "@/features/auth/server/logout-action";
 import { DashboardNav } from "@/features/navigation/components/dashboard-nav";
+import { FeedbackButton } from "@/features/feedback/components/feedback-button";
 import { getUnreadNotificationCount } from "@/features/notifications/server/get-unread-notification-count";
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
@@ -61,11 +62,14 @@ export default async function DashboardLayout({
             </Link>
             <DashboardNav unreadCount={unreadCount} />
           </div>
-          <form action={logoutAction}>
-            <Button type="submit" variant="outline" size="sm">
-              로그아웃
-            </Button>
-          </form>
+          <div className="flex items-center gap-2">
+            <FeedbackButton />
+            <form action={logoutAction}>
+              <Button type="submit" variant="outline" size="sm">
+                로그아웃
+              </Button>
+            </form>
+          </div>
         </div>
       </header>
       <main className="flex-1 bg-muted/20">

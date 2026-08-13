@@ -62,6 +62,8 @@ export const RATE_LIMIT_BUDGETS = {
   memberRoleChange: budget("member_role_change", 30, 60 * 60),
   /** Phase 12 §Rate Limit - "AI Endpoint 별도 Rate Limit". Deliberately its own budget, separate from every other purpose above - an LLM call is orders of magnitude more expensive (latency + real provider cost, once a real provider is configured) than any other rate-limited action in this app, so it gets a tighter default. */
   aiAsk: budget("ai_ask", 20, 60 * 60),
+  /** §Phase 15.1 Part 6 - Closed Beta feedback. Generous enough that a frustrated user can report several distinct issues in one session, tight enough to bound spam from one account. */
+  feedbackSubmit: budget("feedback_submit", 20, 60 * 60),
 } as const;
 
 export type RateLimitPurpose = keyof typeof RATE_LIMIT_BUDGETS;
