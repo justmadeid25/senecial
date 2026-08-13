@@ -150,13 +150,13 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
     // pg_stat_activity/server-log evidence ruling out a stuck query.
     await expect(cardByHeading(page, "첨부 파일").getByText("extraction-source.docx")).toBeVisible({ timeout: 120_000 });
 
+    // §Phase 15.1 - upload now auto-starts the extraction job itself (no
+    // separate "정보 추출" click) - see upload-contract-file-action.ts. The
+    // job already exists by the time this page renders, so the manual
+    // start button never appears for this file at all (positive
+    // expression of the same server-side dedup rule as before - the UI
+    // simply never offers a redundant start action once a job exists).
     const fileRow = page.getByRole("row").filter({ hasText: "extraction-source.docx" });
-    await fileRow.getByRole("button", { name: "정보 추출" }).click();
-    await expect(page.getByText("정보 추출을 시작했습니다.")).toBeVisible();
-
-    // Once a job exists, the UI offers no way to start a second one for
-    // the same file - the start button is replaced by a status link
-    // (positive expression of the dedup rule enforced server-side).
     await expect(fileRow.getByRole("button", { name: "정보 추출" })).toHaveCount(0);
     await expect(fileRow.getByText("대기 중")).toBeVisible();
 
@@ -323,10 +323,8 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
     await page.getByRole("button", { name: "업로드" }).click();
     await expect(cardByHeading(page, "첨부 파일").getByText("member-source.docx")).toBeVisible({ timeout: 30_000 });
 
-    const memberFileRow = page.getByRole("row").filter({ hasText: "member-source.docx" });
-    await memberFileRow.getByRole("button", { name: "정보 추출" }).click();
-    await expect(page.getByText("정보 추출을 시작했습니다.")).toBeVisible();
-
+    // §Phase 15.1 - upload auto-starts the extraction job (see the first
+    // test in this file for the full comment) - no click needed here.
     runExtractionWorker();
     await page.goto(contractUrl);
     const reviewLink = page
@@ -376,10 +374,7 @@ test.describe.serial("contract extraction: upload -> worker -> review -> apply",
     await page.getByRole("button", { name: "업로드" }).click();
     await expect(cardByHeading(page, "첨부 파일").getByText("broken-source.docx")).toBeVisible({ timeout: 30_000 });
 
-    const brokenFileRow = page.getByRole("row").filter({ hasText: "broken-source.docx" });
-    await brokenFileRow.getByRole("button", { name: "정보 추출" }).click();
-    await expect(page.getByText("정보 추출을 시작했습니다.")).toBeVisible();
-
+    // §Phase 15.1 - upload auto-starts the extraction job - no click needed here.
     runExtractionWorker();
     await page.goto(contractUrl);
 

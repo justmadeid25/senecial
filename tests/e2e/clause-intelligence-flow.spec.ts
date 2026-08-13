@@ -156,25 +156,23 @@ test.describe.serial("clause structuring, search, comparison, and review signals
     // rate-limit check), so this stays a generous, measured budget.
     await expect(cardByHeading(page, "첨부 파일").getByText("clause-source.docx")).toBeVisible({ timeout: 120_000 });
 
+    // §Phase 15.1 - upload auto-starts the extraction job - no click needed here.
     const fileRow = page.getByRole("row").filter({ hasText: "clause-source.docx" });
-    await fileRow.getByRole("button", { name: "정보 추출" }).click();
-    await expect(page.getByText("정보 추출을 시작했습니다.")).toBeVisible();
-
     runExtractionWorker();
     await page.goto(contractUrl);
     await expect(fileRow.getByText("검토 필요")).toBeVisible();
   });
 
-  test("owner starts a clause segmentation job from the extracted document", async ({ page }) => {
+  test("clause segmentation auto-starts once the extracted document exists", async ({ page }) => {
     await logIn(page, ownerEmail);
     await page.goto(contractUrl);
 
     await expect(page.getByText("계약 조항 분해")).toBeVisible();
-    await page.getByRole("button", { name: "조항 분해 시작" }).click();
-    await expect(page.getByText("조항 분해를 시작했습니다.")).toBeVisible();
 
-    // Once a job exists, the start button is replaced by a status badge -
-    // the UI offers no way to start a second job for the same document.
+    // §Phase 15.1 - AutoStartSegmentationTrigger fires client-side on
+    // mount and refreshes the page once the job is created - no manual
+    // "조항 분해 시작" click needed. expect().toBeVisible()'s own polling
+    // covers the round trip.
     await expect(page.getByRole("button", { name: "조항 분해 시작" })).toHaveCount(0);
     await expect(page.getByText("대기 중")).toBeVisible();
   });

@@ -118,15 +118,16 @@ test.describe.serial("AI conversation: real citation + hallucination-guard fallb
     // headroom for the rest of this test after it.
     await expect(cardByHeading(page, "첨부 파일").getByText("ai-e2e-source.docx")).toBeVisible({ timeout: 120_000 });
 
-    const fileRow = page.getByRole("row").filter({ hasText: "ai-e2e-source.docx" });
-    await fileRow.getByRole("button", { name: "정보 추출" }).click();
-    await expect(page.getByText("정보 추출을 시작했습니다.")).toBeVisible();
+    // §Phase 15.1 - upload auto-starts the extraction job - no click needed here.
     runWorker("scripts/process-extraction-jobs.ts");
 
     await page.goto(contractUrl);
     await expect(page.getByText("계약 조항 분해")).toBeVisible();
-    await page.getByRole("button", { name: "조항 분해 시작" }).click();
-    await expect(page.getByText("조항 분해를 시작했습니다.")).toBeVisible();
+    // §Phase 15.1 - AutoStartSegmentationTrigger fires client-side on
+    // mount and refreshes the page once the job is created - no manual
+    // "조항 분해 시작" click needed.
+    await expect(page.getByRole("button", { name: "조항 분해 시작" })).toHaveCount(0);
+    await expect(page.getByText("대기 중")).toBeVisible();
     runWorker("scripts/process-clause-segmentation-jobs.ts");
 
     // §Embedding Pipeline - the segmentation worker's own completion hook
