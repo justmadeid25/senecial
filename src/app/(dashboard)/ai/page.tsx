@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AiChat } from "@/features/ai/components/ai-chat";
+import { AiQaOpenedBeacon } from "@/features/ai/components/ai-qa-opened-beacon";
 import { getAiSearchPatternSummary } from "@/features/ai/server/get-ai-search-pattern-summary";
 import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
@@ -28,6 +29,7 @@ export default async function AiPage() {
 
   return (
     <div className="space-y-6">
+      <AiQaOpenedBeacon />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">AI 계약 상담</h1>
         <p className="text-sm text-muted-foreground">

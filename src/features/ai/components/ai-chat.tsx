@@ -7,6 +7,7 @@ import { FileText, ScrollText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { recordCitationInspectedAction } from "@/features/ai/server/record-citation-inspected-action";
 
 /**
  * §Phase 14.3 §23/§24 - the wire payload already carries the full
@@ -187,6 +188,12 @@ export function AiChat() {
                           render={
                             <Link
                               href={`/contracts/${citation.contractId}`}
+                              onClick={() =>
+                                void recordCitationInspectedAction({
+                                  contractId: citation.contractId,
+                                  evidenceType: citation.evidenceType,
+                                })
+                              }
                               className="inline-flex items-center gap-1 rounded-full border border-border bg-accent/50 px-2 py-0.5 text-xs text-accent-foreground outline-none transition-colors duration-[--duration-micro] hover:border-primary/40 hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
                             />
                           }
