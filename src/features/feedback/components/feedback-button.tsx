@@ -108,7 +108,19 @@ export function FeedbackButton() {
               <Label htmlFor="feedback-category">종류</Label>
               <Select value={category} onValueChange={(value) => setCategory(value ?? "")}>
                 <SelectTrigger id="feedback-category" className="w-full">
-                  <SelectValue placeholder="종류 선택" />
+                  {/* §Phase 15.1R - explicit label lookup, not base-ui's
+                      default value display: without this, a real manual
+                      walkthrough found the trigger showing the raw enum
+                      ("AI_ANSWER_SEEMS_WRONG") instead of the Korean label
+                      once selected - an internal-value leak into user-
+                      facing copy. */}
+                  <SelectValue placeholder="종류 선택">
+                    {(value: string | null) =>
+                      value
+                        ? (FEEDBACK_CATEGORY_LABELS[value as keyof typeof FEEDBACK_CATEGORY_LABELS] ?? value)
+                        : undefined
+                    }
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {CATEGORIES.map(([value, label]) => (

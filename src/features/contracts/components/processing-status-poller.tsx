@@ -22,12 +22,16 @@ function PollingSession() {
     }
 
     const intervalId = window.setInterval(() => {
-      // Paused while the tab is backgrounded - resumes on its own once the
-      // tab is visible again via the next visible interval tick, no extra
-      // wiring needed (§Part 4 - "resilient to tab backgrounding").
-      if (document.hidden) {
-        return;
-      }
+      // §Phase 15.1R - a `document.hidden` early-return here was tried and
+      // removed: it caused a real, silent failure found via a live manual
+      // browser walkthrough (not caught by any automated test, since
+      // Playwright/CDP-controlled tabs consistently report
+      // `document.hidden === true` even while being actively driven, so
+      // the interval never called router.refresh() but the banner still
+      // claimed "자동으로 갱신됩니다"). Polling unconditionally is still
+      // bounded (§Part 4 - "no runaway requests") by MAX_POLL_DURATION_MS
+      // below - at most ~45 requests over 3 minutes, whether or not the
+      // tab is foregrounded.
       const elapsed = Date.now() - (startedAtRef.current ?? Date.now());
       if (elapsed >= MAX_POLL_DURATION_MS) {
         setTimedOut(true);
