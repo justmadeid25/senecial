@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ClipboardList, FileStack, History, ScanText, Sparkles, UploadCloud } from "lucide-react";
+import { ClipboardList, FileStack, History, MessageCircleQuestion, ScanText, Sparkles, UploadCloud } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,11 +14,16 @@ import { listContractFiles } from "@/features/contract-files/server/list-contrac
 import { ContractStatusBadge } from "@/features/contracts/components/contract-status-badge";
 import { DeleteContractButton } from "@/features/contracts/components/delete-contract-button";
 import { getContract } from "@/features/contracts/server/get-contract";
+import { AutoStartSegmentationTrigger } from "@/features/clauses/components/auto-start-segmentation-trigger";
 import { ClauseSegmentationSection } from "@/features/clauses/components/clause-segmentation-section";
-import { listClauseSegmentationJobs } from "@/features/clauses/server/list-clause-segmentation-jobs";
+import { listClauseSegmentationJobs, pickLatestJobPerDocument } from "@/features/clauses/server/list-clause-segmentation-jobs";
 import { listExtractedDocuments } from "@/features/clauses/server/list-extracted-documents";
+import { ContractProcessingStatus } from "@/features/contracts/components/contract-processing-status";
+import { ContractViewedBeacon } from "@/features/contracts/components/contract-viewed-beacon";
+import { countContractDocumentChunks } from "@/features/contracts/server/count-document-chunks";
 import { ExtractionSection } from "@/features/extraction/components/extraction-section";
 import { listExtractionJobs } from "@/features/extraction/server/list-extraction-jobs";
+import { deriveContractProcessingState } from "@/domain/contracts/processing-state";
 import { MAX_UPLOAD_SIZE_MB } from "@/lib/config/file-upload";
 import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { formatDateKst, formatDateTimeKst } from "@/lib/format/date";
@@ -109,8 +114,25 @@ export default async function ContractDetailPage({
     contractId: contract.id,
   });
 
+  const chunkCount = await countContractDocumentChunks({
+    userId: authContext.userId,
+    organizationId: authContext.organizationId,
+    contractId: contract.id,
+  });
+
+  const processingState = deriveContractProcessingState({
+    extractionJobStatuses: extractionJobs.map((job) => job.status),
+    segmentationJobStatuses: pickLatestJobPerDocument(segmentationJobs).map((job) => job.status),
+    chunkCount,
+  });
+
   return (
     <div className="space-y-6">
+      <ContractViewedBeacon contractId={contract.id} />
+      <AutoStartSegmentationTrigger
+        contractId={contract.id}
+        documentIds={extractedDocuments.map((document) => document.id)}
+      />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -123,6 +145,14 @@ export default async function ContractDetailPage({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            nativeButton={false}
+            render={<Link href={`/ai?contractId=${contract.id}`} />}
+          >
+            <MessageCircleQuestion className="size-4" aria-hidden="true" />
+            AI 질문
+          </Button>
           <Button
             variant="outline"
             nativeButton={false}
@@ -147,6 +177,8 @@ export default async function ContractDetailPage({
           {isOwner && <DeleteContractButton contractId={contract.id} title={contract.title} />}
         </div>
       </div>
+
+      {files.length > 0 && <ContractProcessingStatus contractId={contract.id} result={processingState} />}
 
       <Card>
         <CardHeader>

@@ -9,7 +9,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CLAUSE_SEGMENTATION_JOB_STATUS_LABELS } from "@/domain/clauses/labels";
+import {
+  CLAUSE_SEGMENTATION_ERROR_CODE_LABELS,
+  CLAUSE_SEGMENTATION_JOB_STATUS_LABELS,
+} from "@/domain/clauses/labels";
 import { extractionMethodLabel } from "@/domain/extraction/labels";
 import { StartSegmentationButton } from "@/features/clauses/components/start-segmentation-button";
 import type { ExtractedDocumentListItem } from "@/features/clauses/server/list-extracted-documents";
@@ -64,11 +67,19 @@ export function ClauseSegmentationSection({
               </TableCell>
               <TableCell>
                 {job ? (
-                  <Badge variant="outline">
-                    {CLAUSE_SEGMENTATION_JOB_STATUS_LABELS[
-                      job.status as keyof typeof CLAUSE_SEGMENTATION_JOB_STATUS_LABELS
-                    ] ?? job.status}
-                  </Badge>
+                  <div className="space-y-1">
+                    <Badge variant="outline">
+                      {CLAUSE_SEGMENTATION_JOB_STATUS_LABELS[
+                        job.status as keyof typeof CLAUSE_SEGMENTATION_JOB_STATUS_LABELS
+                      ] ?? job.status}
+                    </Badge>
+                    {job.status === "FAILED" && job.errorCode && (
+                      <p className="text-xs text-destructive">
+                        {CLAUSE_SEGMENTATION_ERROR_CODE_LABELS[job.errorCode] ??
+                          "처리 중 오류가 발생했습니다."}
+                      </p>
+                    )}
+                  </div>
                 ) : (
                   <span className="text-sm text-muted-foreground">-</span>
                 )}

@@ -70,3 +70,13 @@ export async function findChunksByIds(params: {
 export async function countChunksForOrganization(organizationId: string): Promise<number> {
   return prisma.contractDocumentChunk.count({ where: { organizationId } });
 }
+
+/** Cheap existence/count check for the contract processing-status banner (§Phase 15.1) - avoids fetching full chunk text just to know whether raw-document AI evidence exists yet. */
+export async function countChunksForContract(params: {
+  organizationId: string;
+  contractId: string;
+}): Promise<number> {
+  return prisma.contractDocumentChunk.count({
+    where: { organizationId: params.organizationId, contractId: params.contractId },
+  });
+}

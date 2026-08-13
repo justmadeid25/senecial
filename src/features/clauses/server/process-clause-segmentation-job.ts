@@ -25,6 +25,7 @@ import { getClauseClassifier, getClauseSegmenter } from "@/server/services/claus
 import { prisma } from "@/server/db/client";
 import { computeChecksum } from "@/server/storage";
 import { enqueueEmbeddingJobsForClauses } from "@/features/ai/server/enqueue-embedding-jobs";
+import { getLogger } from "@/server/logging";
 
 const ALL_CLAUSE_TYPES: ClauseType[] = [
   "DEFINITIONS",
@@ -314,9 +315,10 @@ async function runClaimedJob(job: ClauseSegmentationJobRow): Promise<void> {
       clauseRows.map((row) => ({ id: row.id, organizationId: row.organizationId, normalizedText: row.normalizedText }))
     );
   } catch (error) {
-    console.error(
-      `Failed to enqueue embedding jobs for segmentation job ${job.id}:`,
-      error instanceof Error ? error.message : error
-    );
+    getLogger().error("segmentation.embedding_jobs.enqueue_failed", {
+      jobId: job.id,
+      contractId: job.contractId,
+      errorName: error instanceof Error ? error.name : "unknown",
+    });
   }
 }

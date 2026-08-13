@@ -2,9 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 
-import { actionError, actionSuccess, toActionErrorResult, type ActionResult } from "@/lib/errors";
+import { ConflictError, actionError, actionSuccess, toActionErrorResult, type ActionResult } from "@/lib/errors";
 import { enforceRateLimit } from "@/lib/rate-limit/enforce-rate-limit";
 import { requireOrganizationMembership } from "@/lib/permissions";
+import { createExtractionJob } from "@/features/extraction/server/create-extraction-job";
+import { getLogger } from "@/server/logging";
 
 import { uploadContractFile } from "./upload-contract-file";
 
@@ -30,6 +32,29 @@ export async function uploadContractFileAction(
       mimeType: file.type,
       buffer,
     });
+
+    // §Phase 15.1 - best-effort auto-chain: removes the "click 정보 추출"
+    // step from the common first-time-user path (§Part 2). createExtractionJob()
+    // is idempotent on (contractFileId, checksum, extractorVersion), so this
+    // can never create a duplicate job. A failure here must never fail the
+    // upload response itself - the "정보 추출" button in ExtractionSection
+    // remains as the manual fallback for a file with no job.
+    try {
+      await createExtractionJob({
+        userId: authContext.userId,
+        organizationId: authContext.organizationId,
+        contractId,
+        input: { contractFileId: uploaded.id },
+      });
+    } catch (error) {
+      if (!(error instanceof ConflictError)) {
+        getLogger().error("upload.extraction_autochain.failed", {
+          contractId,
+          contractFileId: uploaded.id,
+          errorName: error instanceof Error ? error.name : "unknown",
+        });
+      }
+    }
 
     revalidatePath(`/contracts/${contractId}`);
 

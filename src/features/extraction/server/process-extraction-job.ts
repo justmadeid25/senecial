@@ -9,6 +9,7 @@ import { isValidNormalizedSuggestionValue } from "@/domain/extraction/validate-n
 import { AUDIT_ACTIONS } from "@/domain/shared/audit-actions";
 import { contractFieldExtractionResultSchema } from "@/lib/validation/extraction";
 import { createDocumentChunksForExtractedDocument } from "@/features/ai/server/create-document-chunks-for-extracted-document";
+import { getLogger } from "@/server/logging";
 import { findContractFileById } from "@/server/repositories/contract-file-repository";
 import { findContractById } from "@/server/repositories/contract-repository";
 import {
@@ -274,9 +275,25 @@ async function runClaimedJob(job: ExtractionJobRow): Promise<void> {
       text: extracted.text,
     });
   } catch (error) {
-    console.error(
-      `Failed to create document chunks for extraction job ${job.id}:`,
-      error instanceof Error ? error.message : error
-    );
+    getLogger().error("extraction.document_chunks.failed", {
+      jobId: job.id,
+      contractId: job.contractId,
+      errorName: error instanceof Error ? error.name : "unknown",
+    });
   }
+
+  // §Phase 15.1 - clause-segmentation auto-start deliberately does NOT
+  // live here. It was tried here first and reverted: this function
+  // (runClaimedJob, via processNextExtractionJob) is called directly by
+  // ~20 existing integration tests that then make their OWN call to
+  // createClauseSegmentationJob() to control job creation precisely
+  // (dedup/retry/ConflictError semantics, revision-freshness fixtures,
+  // tenant-isolation fixtures) - auto-creating the job here made every one
+  // of those tests' own createClauseSegmentationJob() call fail with
+  // ConflictError instead. The auto-start now lives at
+  // features/clauses/server/auto-start-segmentation-action.ts, triggered
+  // once per real contract-page visit from the browser (see
+  // AutoStartSegmentationTrigger) - same idempotent
+  // createClauseSegmentationJob() underneath, just called from a layer no
+  // test invokes directly.
 }

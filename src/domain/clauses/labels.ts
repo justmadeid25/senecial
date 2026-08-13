@@ -60,6 +60,24 @@ export const CLAUSE_SEGMENTATION_JOB_STATUS_LABELS: Record<ClauseSegmentationJob
   CANCELLED: "취소됨",
 };
 
+/**
+ * §Phase 15.1 - safe, pre-written Korean sentences only, same discipline as
+ * extraction/labels.ts's EXTRACTION_ERROR_CODE_LABELS (which this mirrors
+ * field-for-field against domain/clauses/segmentation-error-codes.ts). Prior
+ * to this, ClauseSegmentationJob.errorCode was fetched onto the job object
+ * but never rendered anywhere - a FAILED segmentation showed no reason.
+ */
+export const CLAUSE_SEGMENTATION_ERROR_CODE_LABELS: Record<string, string> = {
+  EXTRACTED_DOCUMENT_NOT_FOUND: "추출된 문서를 찾을 수 없습니다.",
+  DOCUMENT_CHECKSUM_MISMATCH: "문서 내용이 변경되어 처리할 수 없습니다.",
+  SEGMENTATION_FAILED: "조항 분해 중 오류가 발생했습니다.",
+  INVALID_SEGMENTATION_RESULT: "조항 분해 결과 형식이 올바르지 않습니다.",
+  INVALID_OFFSETS: "조항 원문 위치가 올바르지 않습니다.",
+  INVALID_HIERARCHY: "조항 계층 구조가 올바르지 않습니다.",
+  CLASSIFICATION_FAILED: "조항 유형 분류 중 오류가 발생했습니다.",
+  MAX_ATTEMPTS_REACHED: "최대 재시도 횟수를 초과했습니다.",
+};
+
 export const CLAUSE_CLASSIFICATION_STATE_LABELS: Record<ClauseClassificationState, string> = {
   UNREVIEWED: "검토 대기",
   CONFIRMED: "승인됨",

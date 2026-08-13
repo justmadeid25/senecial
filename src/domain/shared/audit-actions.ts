@@ -54,6 +54,15 @@ export const AUDIT_ACTIONS = {
   // Phase 12 - AI Contract Intelligence Platform (§Similar Clause, §AI Review).
   SIMILAR_CLAUSES_VIEWED: "SIMILAR_CLAUSES_VIEWED",
   AI_CLAUSE_REVIEW_GENERATED: "AI_CLAUSE_REVIEW_GENERATED",
+  // §Phase 15.1 - minimal Closed Beta funnel instrumentation (§Part 2/3 of
+  // the Phase 15 audit's telemetry mapping). Every event below reuses this
+  // existing AuditLog backbone - no new table, no event/prompt/answer
+  // content in metadata, ever.
+  USER_LOGIN: "USER_LOGIN",
+  CONTRACT_VIEWED: "CONTRACT_VIEWED",
+  AI_QA_OPENED: "AI_QA_OPENED",
+  AI_CITATION_INSPECTED: "AI_CITATION_INSPECTED",
+  FEEDBACK_SUBMITTED: "FEEDBACK_SUBMITTED",
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
