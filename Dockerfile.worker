@@ -33,10 +33,22 @@
 # own `pnpm install --frozen-lockfile` + `pnpm exec prisma generate` - keep
 # the two in sync if either changes.
 #
-# CMD below is a PLACEHOLDER pending the worker scheduling design (which
-# batch scripts run on which cadence, and via what mechanism - Railway cron
-# vs. an in-container scheduler) - not yet decided. Replace before this
-# image is actually used to process anything.
+# CMD runs scripts/worker-scheduler.ts - a single always-on process that
+# polls the existing batch scripts on independent per-job intervals (one
+# in-container scheduler, chosen over Railway native cron - see the
+# Railway worker scheduling activation report for the full rationale).
+#
+# Invokes tsx's CLI script directly under `node` (not `pnpm run
+# worker:start`) so `node` itself is PID 1 and actually receives SIGTERM -
+# a real, confirmed-via-`docker stop` finding: `pnpm`/`npm` as PID 1 does
+# NOT forward SIGTERM to its child process, so the scheduler's own
+# graceful-shutdown handler never ran and the container just got killed
+# after the grace period. `node --import tsx/esm <file>` was also tried
+# and rejected - it does not replicate tsx's own extensionless/relative-.ts
+# import resolution, so `../src/...` imports failed to resolve. The stable
+# top-level `node_modules/tsx/dist/cli.mjs` symlink (not the
+# version-pinned `.pnpm/tsx@x.x.x/...` path) is what pnpm always produces
+# for a direct devDependency, confirmed identical output to `pnpm exec tsx`.
 
 FROM node:22-bookworm-slim AS base
 RUN corepack enable
@@ -73,4 +85,4 @@ COPY --from=builder --chown=node:node /app /app
 
 USER node
 
-CMD ["node", "-e", "console.log('senecial worker placeholder image - scheduling not yet configured, see Dockerfile.worker'); setInterval(() => {}, 1 << 30);"]
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "scripts/worker-scheduler.ts"]
