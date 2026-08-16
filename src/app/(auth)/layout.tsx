@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { auth } from "@/auth";
+import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
+import { requireOrganizationMembership } from "@/lib/permissions";
 
 /**
  * §Phase 14.3 §15 - shares the landing page's brand identity (wordmark,
@@ -17,9 +18,35 @@ export default async function AuthLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth();
+  // Deliberately the exact same check (dashboard)/layout.tsx uses to grant
+  // access, not a bare `session?.user?.id` truthiness check - a JWT session
+  // has no server-side revocation, so a cookie can still carry a valid
+  // signature and a user.id for an account that was since deleted, or for
+  // a user removed from their last organization. Redirecting to /dashboard
+  // on session presence alone (the previous behavior) sent that visitor
+  // straight into (dashboard)/layout.tsx's own DB re-verification, which
+  // correctly rejects them and redirects back here - and since this layout
+  // would make the exact same wrong call every time, that was an infinite
+  // /login <-> /dashboard loop for anyone in that state (confirmed in
+  // production - see the incident this fix addresses). Using the identical
+  // requireOrganizationMembership() check here means this layout can never
+  // disagree with the dashboard about who has access, for any current or
+  // future reason a session might go stale.
+  let canAccessDashboard = false;
+  try {
+    await requireOrganizationMembership();
+    canAccessDashboard = true;
+  } catch (error) {
+    if (!(error instanceof UnauthorizedError) && !(error instanceof ForbiddenError)) {
+      throw error;
+    }
+    // Stale/invalid session - fall through and render the auth page below,
+    // identically to a visitor with no session at all. Never distinguishes
+    // "no session" from "stale session" in what's rendered, so this can't
+    // leak whether a given account/session ever existed.
+  }
 
-  if (session?.user?.id) {
+  if (canAccessDashboard) {
     redirect("/dashboard");
   }
 

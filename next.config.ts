@@ -2,6 +2,25 @@ import type { NextConfig } from "next";
 
 import { SERVER_ACTION_BODY_SIZE_LIMIT_MB } from "./src/lib/config/file-upload";
 
+// Vercel's real build servers set BOTH `VERCEL=1` and `CI=1` on the
+// process environment before `next build` ever runs - `VERCEL` alone is
+// NOT a reliable "am I really building on Vercel" signal, because
+// `vercel env pull` (README's local-dev setup step) intentionally writes
+// Vercel's system environment variables - including a literal
+// `VERCEL="1"` - into .env.local for local-dev parity, and Next.js loads
+// .env.local on every local build too. That collision was a real,
+// confirmed bug: a plain local `pnpm build`/`pnpm test:e2e:prod` silently
+// produced a NON-standalone build (breaking the Docker image and the
+// production-like E2E gate, both of which require .next/standalone),
+// even though nothing about the local machine was actually Vercel. `CI`
+// is never one of the variables `vercel env pull` writes to .env.local,
+// so requiring it too makes this check true only for a real Vercel
+// build - never for a local build with a pulled .env.local, and (the
+// other direction) GitHub Actions CI sets CI=1 but never VERCEL, so its
+// own real `next build` + `next start` E2E job (ci.yml) is unaffected
+// and still gets standalone output.
+const isRealVercelBuild = Boolean(process.env.VERCEL) && Boolean(process.env.CI);
+
 const nextConfig: NextConfig = {
   // Phase 9 §37 - required for the production Dockerfile's minimal
   // runtime image (docs/operations/deployment.md / README's Docker
@@ -13,9 +32,10 @@ const nextConfig: NextConfig = {
   // standalone mode restructures away. Standalone mode is only needed for
   // the Docker/self-hosted path (root Dockerfile does
   // `COPY --from=builder /app/.next/standalone`), so it's disabled
-  // specifically when building inside Vercel (VERCEL=1, set automatically
-  // by their build environment) and left on otherwise.
-  output: process.env.VERCEL ? undefined : "standalone",
+  // specifically when building inside Vercel (see isRealVercelBuild
+  // above) and left on otherwise, including local builds that merely
+  // have Vercel's system env vars pulled into .env.local.
+  output: isRealVercelBuild ? undefined : "standalone",
   // §Phase 12.4 §2 - `next build`'s OWN internal "Running TypeScript" step
   // repeatedly crashed a build worker with a raw Windows access violation
   // (exit code 3221225794 / 0xC0000005) on this machine, even after
