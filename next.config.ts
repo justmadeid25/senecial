@@ -7,7 +7,15 @@ const nextConfig: NextConfig = {
   // runtime image (docs/operations/deployment.md / README's Docker
   // section): bundles a self-contained server into .next/standalone
   // instead of requiring the full node_modules tree at runtime.
-  output: "standalone",
+  // Vercel's own build pipeline (its Adapters output-collection step)
+  // conflicts with `output: "standalone"` - it expects
+  // `.next/next-server.js.nft.json` at the default location, which
+  // standalone mode restructures away. Standalone mode is only needed for
+  // the Docker/self-hosted path (root Dockerfile does
+  // `COPY --from=builder /app/.next/standalone`), so it's disabled
+  // specifically when building inside Vercel (VERCEL=1, set automatically
+  // by their build environment) and left on otherwise.
+  output: process.env.VERCEL ? undefined : "standalone",
   // §Phase 12.4 §2 - `next build`'s OWN internal "Running TypeScript" step
   // repeatedly crashed a build worker with a raw Windows access violation
   // (exit code 3221225794 / 0xC0000005) on this machine, even after
