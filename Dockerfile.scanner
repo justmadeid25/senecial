@@ -1,0 +1,79 @@
+# Senecial - malware scanner image (§Closed Beta launch blocker: real
+# malware scanning to replace FILE_MALWARE_SCANNER=noop).
+#
+# A dedicated Railway service, separate from Dockerfile.worker. Runs a
+# local ClamAV daemon (clamd) plus a small authenticated Node HTTP
+# wrapper (scripts/malware-scanner-server.ts) that the Vercel web app's
+# upload path calls synchronously over HTTPS (see
+# src/server/services/contract-files/clamav-http-file-malware-scanner.ts).
+# Chosen over a third-party scanning API specifically because uploaded
+# contract files never leave our own infrastructure - see the Section 4
+# design comparison in the launch-blocker report for the full rationale.
+#
+# Runs entirely as the `clamav` system user created by the clamav-daemon
+# apt package's postinst script (never root) - both clamd and the Node
+# wrapper (which spawns clamd/freshclam and connects to clamd's Unix
+# socket) run as this same user, which sidesteps any cross-user Unix
+# socket / temp-file permission mismatch entirely, at the cost of not
+# doing a root -> setuid privilege drop the way clamd normally would
+# (docker/clamav/clamd.conf and freshclam.conf both omit their `User`/
+# `DatabaseOwner` directives for exactly this reason - clamd/freshclam
+# would otherwise try to setuid to a user they already are and fail).
+#
+# No `next build` here (mirrors Dockerfile.worker) - this image never
+# touches `.next/`, only `scripts/malware-scanner-server.ts` via tsx.
+
+FROM node:22-bookworm-slim AS base
+RUN corepack enable
+
+# ---------------------------------------------------------------------------
+FROM base AS deps
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# ---------------------------------------------------------------------------
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN pnpm exec prisma generate
+
+# ---------------------------------------------------------------------------
+FROM base AS scanner
+
+# clamav-daemon provides clamd itself; clamdscan (the CLI client our
+# wrapper shells out to) and clamav-freshclam (the signature updater) are
+# each separate Debian packages, not bundled into clamav-daemon - verified
+# via a real `apt-get install -s clamdscan` dry run after clamd started
+# but `clamdscan` was missing from $PATH entirely. --no-install-recommends
+# keeps the image lean (skips e.g. clamav-docs).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates clamav-daemon clamdscan clamav-freshclam \
+    && rm -rf /var/lib/apt/lists/* \
+    # Remove the packaged default configs' "Example" guard line and any
+    # stock content - docker/clamav/*.conf (copied below) fully replaces
+    # them.
+    && rm -f /etc/clamav/clamd.conf /etc/clamav/freshclam.conf \
+    # /run/clamav is where the package's own default configs point PID
+    # files; keep it writable by clamav even though our clamd.conf points
+    # PidFile at /tmp instead, in case any package tooling still expects it.
+    && chown -R clamav:clamav /var/lib/clamav /run/clamav 2>/dev/null || true
+
+WORKDIR /app
+
+ARG GIT_COMMIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+ENV BUILD_DATE=${BUILD_DATE}
+ENV NODE_ENV=production
+
+COPY --from=builder --chown=clamav:clamav /app /app
+COPY --chown=clamav:clamav docker/clamav/clamd.conf /etc/clamav/clamd.conf
+COPY --chown=clamav:clamav docker/clamav/freshclam.conf /etc/clamav/freshclam.conf
+
+USER clamav
+
+EXPOSE 8080
+
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "scripts/malware-scanner-server.ts"]

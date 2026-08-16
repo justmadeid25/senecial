@@ -1,5 +1,7 @@
 import type { FileMalwareScanner } from "@/domain/contract-files/malware-scanner";
+import { resolveMalwareScannerConfig } from "@/lib/config/malware-scanner";
 
+import { ClamAvHttpFileMalwareScanner } from "./clamav-http-file-malware-scanner";
 import { NoopFileMalwareScanner } from "./noop-file-malware-scanner";
 
 let cachedScanner: FileMalwareScanner | undefined;
@@ -31,6 +33,10 @@ export function getFileMalwareScanner(): FileMalwareScanner {
         );
       }
       cachedScanner = new NoopFileMalwareScanner();
+      return cachedScanner;
+    }
+    case "clamav-http": {
+      cachedScanner = new ClamAvHttpFileMalwareScanner(resolveMalwareScannerConfig());
       return cachedScanner;
     }
     default:
