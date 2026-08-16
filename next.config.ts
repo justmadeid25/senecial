@@ -64,6 +64,21 @@ const nextConfig: NextConfig = {
     // neither layer is the tighter one.
     proxyClientMaxBodySize: `${SERVER_ACTION_BODY_SIZE_LIMIT_MB}mb`,
   },
+  // www.senecial.co.kr has no dashboard/CLI-exposed Vercel domain-redirect
+  // toggle (checked - no such field via `vercel domains`), so the
+  // canonical-domain redirect is done here instead: permanent (308)
+  // host-based redirect to the apex domain, matching Next.js's own
+  // documented `has: [{type: "host"}]` pattern.
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "www.senecial.co.kr" }],
+        destination: "https://senecial.co.kr/:path*",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
