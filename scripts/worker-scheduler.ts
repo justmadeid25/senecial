@@ -25,12 +25,16 @@ import { resolvePackageBinEntry } from "../src/server/process/resolve-package-bi
  * extra check within the same hour/day a harmless no-op, so this never
  * needs a second scheduling authority.
  *
- * Deliberately NOT scheduled here (see the Railway scheduling activation
- * report for the full reasoning): mail:process / mail:recover-stale /
- * mail:recover-stale-token-deliveries (Postmark production approval still
- * unconfirmed - these can send real email once real deliveries exist) and
- * retention:scan / retention:purge (destructive, operator-only for the
- * first Closed Beta users per explicit instruction).
+ * mail:process was added 2026-08-19 once Postmark production approval was
+ * confirmed (see the Railway scheduling activation report) - it only ever
+ * sends PASSWORD_CHANGED notices (docs/operations/batch-jobs.md), at that
+ * doc's documented "매 1~5분" cadence.
+ *
+ * Deliberately NOT scheduled here: mail:recover-stale /
+ * mail:recover-stale-token-deliveries (still pending the same activation
+ * decision for the recovery paths) and retention:scan / retention:purge
+ * (destructive, operator-only for the first Closed Beta users per explicit
+ * instruction).
  */
 
 interface ScheduledJob {
@@ -53,6 +57,10 @@ const JOBS: ScheduledJob[] = [
   { script: "ai:recover-stale-embeddings", pollIntervalMs: 30_000 },
   { script: "ai:scan-stale-embeddings", pollIntervalMs: 60_000 },
   { script: "clauses:generate-signals", pollIntervalMs: 60_000 },
+
+  // PASSWORD_CHANGED outbox drain - docs/operations/batch-jobs.md documents
+  // "매 1~5분"; polled at the tight end of that range.
+  { script: "mail:process", pollIntervalMs: 60_000 },
 
   // Read-only diagnostic, documented cadence 5-15min - never sends mail.
   { script: "mail:scan-stale-token-deliveries", pollIntervalMs: 10 * 60_000 },
@@ -127,6 +135,7 @@ const SCRIPT_FILES: Record<string, string> = {
   "ai:process-chunk-embeddings": "process-document-chunk-embedding-jobs.ts",
   "ai:recover-stale-embeddings": "recover-stale-embedding-jobs.ts",
   "ai:scan-stale-embeddings": "scan-stale-embeddings.ts",
+  "mail:process": "process-mail-deliveries.ts",
   "mail:scan-stale-token-deliveries": "scan-stale-token-deliveries.ts",
   "files:reconcile": "reconcile-deleted-files.ts",
   "files:find-orphans": "find-orphan-files.ts",
