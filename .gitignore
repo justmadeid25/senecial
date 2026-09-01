@@ -90,3 +90,7 @@ next-env.d.ts
 # rather than a committed project artifact.
 /AGENTS.md
 /CLAUDE.md
+
+# Local pnpm content-addressable store - large (GB-scale), machine-local,
+# never a committed project artifact.
+.pnpm-store/
