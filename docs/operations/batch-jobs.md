@@ -14,14 +14,14 @@
 | `pnpm clauses:generate-signals` | 매시간 | instant | 검토 신호 생성 |
 | `pnpm retention:scan` | 매일 1회 | daily | 보존 정책 대상 등록 |
 | `pnpm retention:purge` | 매시간 | hourly | 실제 purge 실행 |
-| `pnpm mail:process` | 매 1~5분 | instant | 비밀번호 변경 알림 메일 큐 처리(Phase 10B) |
-| `pnpm mail:recover-stale` | 매 1~5분 | instant | 정체된 메일 전송(SENDING) 복구(Phase 10B) |
-| `pnpm mail:scan-stale-token-deliveries` | 매 5~15분 | 없음(읽기 전용, 항상 재실행 가능) | 정체된 토큰 메일(PENDING) 탐지·리포트만(Phase 10C) |
-| `pnpm mail:recover-stale-token-deliveries` | 매 5~15분 | 없음(내부적으로 행 단위 원자적 가드) | 정체된 토큰 메일 안전 복구(Phase 10C) |
+| `pnpm mail:process` | 매 1~5분 | instant | 비밀번호 변경 알림 메일 큐 처리 |
+| `pnpm mail:recover-stale` | 매 1~5분 | instant | 정체된 메일 전송(SENDING) 복구 |
+| `pnpm mail:scan-stale-token-deliveries` | 매 5~15분 | 없음(읽기 전용, 항상 재실행 가능) | 정체된 토큰 메일(PENDING) 탐지·리포트만 |
+| `pnpm mail:recover-stale-token-deliveries` | 매 5~15분 | 없음(내부적으로 행 단위 원자적 가드) | 정체된 토큰 메일 안전 복구 |
 
-`pnpm mail:process`는 `PASSWORD_CHANGED` 메일만 처리합니다 — 조직 초대/이메일 인증/비밀번호 재설정 메일은 토큰 원문을 DB에 저장하지 않는다는 불변 조건 때문에 요청 처리 중 동기적으로 발송되며 이 워커가 처리할 대상에 애초에 포함되지 않습니다(README의 Phase 10B "Outbox 아키텍처" 절 참고).
+`pnpm mail:process`는 `PASSWORD_CHANGED` 메일만 처리합니다 — 조직 초대/이메일 인증/비밀번호 재설정 메일은 토큰 원문을 DB에 저장하지 않는다는 불변 조건 때문에 요청 처리 중 동기적으로 발송되며 이 워커가 처리할 대상에 애초에 포함되지 않습니다(README의 "Outbox 아키텍처" 절 참고).
 
-### 정체된 토큰 메일 복구 (Phase 10C)
+### 정체된 토큰 메일 복구
 
 동기 발송 대상(`ORGANIZATION_INVITATION`/`EMAIL_VERIFICATION`/`PASSWORD_RESET`)은 DB 트랜잭션 커밋 직후, 애플리케이션 프로세스가 죽으면 `MailDelivery` row가 영원히 `PENDING`으로 남을 수 있습니다 — 위 표의 `mail:recover-stale`(SENDING 전용)는 이 상태를 다루지 못합니다.
 
@@ -76,7 +76,7 @@ LIMIT 50;
 
 ## Scheduler 연동 예시
 
-이 애플리케이션은 CLI 스크립트만 제공하며, 실제 외부 scheduler는 연결되어 있지 않습니다(§30). 아래는 예시입니다.
+이 애플리케이션은 CLI 스크립트만 제공하며, 실제 외부 scheduler는 연결되어 있지 않습니다. 아래는 예시입니다.
 
 ### cron (worker 컨테이너/VM)
 
@@ -105,7 +105,7 @@ jobs:
 
 ### Vercel Cron의 한계
 
-Vercel Cron은 HTTP 엔드포인트를 호출하는 방식이라, 이 CLI 스크립트들을 그대로 쓰려면 각 작업을 감싸는 Route Handler를 별도로 만들어야 합니다(이번 Phase에서는 미구현 — CLI만 제공). 또한 Vercel Functions의 실행 시간 제한을 고려해 배치 크기(`--limit`)를 작게 유지해야 합니다.
+Vercel Cron은 HTTP 엔드포인트를 호출하는 방식이라, 이 CLI 스크립트들을 그대로 쓰려면 각 작업을 감싸는 Route Handler를 별도로 만들어야 합니다(아직 미구현 — CLI만 제공). 또한 Vercel Functions의 실행 시간 제한을 고려해 배치 크기(`--limit`)를 작게 유지해야 합니다.
 
 ### 별도 worker 컨테이너 (권장 운영 구조)
 

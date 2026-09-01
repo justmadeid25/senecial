@@ -1,4 +1,4 @@
-# 모니터링 (Phase 11)
+# 모니터링
 
 ## 지표 (Metrics)
 
@@ -37,8 +37,9 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" https://internal-host/api/metrics
 
 ## Readiness (`/api/health/ready`)
 
-`database`/`storage`/`rateLimit`/`mail`/`config`(Phase 9-10) 외에 Phase 11에서 추가:
+`/api/health/ready`는 다음 체크를 모두 수행합니다:
 
+- `database`/`storage`/`rateLimit`/`mail`/`config`: 각 의존성이 실제로 응답하는지.
 - `batch`: `RUNNING` 상태인 `BatchExecution`의 heartbeat가 30분 이상 갱신되지 않으면 error - 워커 프로세스가 죽은 채 남아있을 가능성을 뜻합니다. `docs/operations/batch-jobs.md`의 `recover-stale-*` 스크립트로 복구하십시오.
 - `version`/`buildDate`: Docker 이미지 빌드 시 baked-in된 git commit SHA/빌드 시각 (secret 아님 - 공개 저장소의 커밋 해시와 동급 정보).
 

@@ -5,7 +5,7 @@
 - `pnpm production:validate`가 FAIL 없이 통과 (WARN은 배포를 막지 않지만 검토)
 - 최신 백업 존재 (`docs/operations/backup.md`)
 - 배포 대상 환경변수에 `NODE_ENV=production`, `DATABASE_URL`, `AUTH_SECRET`(32자 이상), `APP_URL`/`AUTH_URL`(HTTPS)가 설정됨
-- (Phase 11) `NODE_ENV=production`으로 애플리케이션이 실제로 기동될 때 `instrumentation.ts`가 위 검증을 자동으로 다시 수행하고, FAIL이 하나라도 있으면 **서버가 요청을 받기 시작하기 전에 스스로 종료**합니다(`process.exit(1)`) - 아래 사전 검증은 "미리 걸러내는" 단계이지, 유일한 방어선이 아닙니다. 자세한 내용은 [monitoring.md](./monitoring.md).
+- `NODE_ENV=production`으로 애플리케이션이 실제로 기동될 때 `instrumentation.ts`가 위 검증을 자동으로 다시 수행하고, FAIL이 하나라도 있으면 **서버가 요청을 받기 시작하기 전에 스스로 종료**합니다(`process.exit(1)`) - 아래 사전 검증은 "미리 걸러내는" 단계이지, 유일한 방어선이 아닙니다. 자세한 내용은 [monitoring.md](./monitoring.md).
 
 ## 절차
 
@@ -18,7 +18,7 @@
    ```bash
    pnpm deploy:migrate
    ```
-   (Phase 11) `pnpm exec prisma migrate deploy`를 직접 호출하는 대신 이 명령을 사용하십시오 - Postgres advisory lock(`src/server/batch/advisory-lock.ts` 재사용)으로 감싸여 있어, 두 개의 배포 파이프라인이 동시에 migration을 시도하면 하나는 즉시 명확한 오류로 실패합니다(자세한 내용은 `scripts/deploy-migrate.ts`).
+   `pnpm exec prisma migrate deploy`를 직접 호출하는 대신 이 명령을 사용하십시오 - Postgres advisory lock(`src/server/batch/advisory-lock.ts` 재사용)으로 감싸여 있어, 두 개의 배포 파이프라인이 동시에 migration을 시도하면 하나는 즉시 명확한 오류로 실패합니다(자세한 내용은 `scripts/deploy-migrate.ts`).
 3. **migration 상태 확인**
    ```sql
    SELECT migration_name, finished_at FROM "_prisma_migrations" ORDER BY finished_at DESC LIMIT 5;
@@ -31,7 +31,7 @@
    ```bash
    curl -f https://<domain>/api/health/ready
    ```
-   `{"status":"ok",...}`가 아니면 배포를 중단하고 롤백 검토. (Phase 11) 응답에 `checks.batch`/`version`/`buildDate`가 추가되었습니다 - 자세한 내용은 [monitoring.md](./monitoring.md).
+   `{"status":"ok",...}`가 아니면 배포를 중단하고 롤백 검토. 응답에 `checks.batch`/`version`/`buildDate`가 추가되었습니다 - 자세한 내용은 [monitoring.md](./monitoring.md).
 6. **운영 환경 검증**
    ```bash
    NODE_ENV=production pnpm production:validate
@@ -40,7 +40,7 @@
    ```bash
    SMOKE_BASE_URL=https://<domain> pnpm smoke
    ```
-   (Phase 11) `pnpm smoke`(`scripts/smoke.ts`)가 인프라 live/ready 확인과 golden path(로그인·계약 생성·파일 업로드/다운로드·`/analytics`)를 synthetic(`@smoke-test.local`) 조직으로 수행하고, 성공/실패와 무관하게 항상 그 조직을 삭제합니다. 자세한 내용은 아래 "Smoke test" 절.
+   `pnpm smoke`(`scripts/smoke.ts`)가 인프라 live/ready 확인과 golden path(로그인·계약 생성·파일 업로드/다운로드·`/analytics`)를 synthetic(`@smoke-test.local`) 조직으로 수행하고, 성공/실패와 무관하게 항상 그 조직을 삭제합니다. 자세한 내용은 아래 "Smoke test" 절.
 
 ## Docker 빌드/실행
 
@@ -58,9 +58,9 @@ docker run -d \
   senecial:latest
 ```
 
-(Phase 14 Part 1) `docker build` + `docker compose --profile smoke up` + 실제 golden-path E2E(`tests/e2e/smoke.spec.ts`)까지 이 환경에서 실제로 실행해 검증했습니다. 그 실행에서 실제 프로덕션 차단급 버그를 하나 발견해 고쳤습니다: Next.js 16 standalone file-tracer(Turbopack)가 pnpm의 격리된 node_modules 레이아웃을 그대로 보존하지 못해, externalize된 패키지(`pg`, Prisma 7 생성 클라이언트)의 전이 의존성들이 빌드된 이미지에서 누락되어 있었고 — 컨테이너가 매번 시작 즉시 `Cannot find module '...'`로 크래시했습니다(Dockerfile 상단 주석 참고). `package.json`에 해당 패키지들을 명시적 직접 의존성으로 선언해 고쳤습니다. 앞으로 의존성/Next.js/pnpm을 업그레이드할 때는 반드시 실제 `docker build` + `docker compose --profile smoke up` + smoke test를 다시 실행해 이 문제가 재발하지 않았는지 확인하십시오 — `node .next/standalone/server.js`만으로는 이 클래스의 버그를 잡을 수 없습니다(이번에 실제로 놓쳤던 사례).
+`docker build` + `docker compose --profile smoke up` + 실제 golden-path E2E(`tests/e2e/smoke.spec.ts`)까지 이 환경에서 실제로 실행해 검증했습니다. 그 실행에서 실제 프로덕션 차단급 버그를 하나 발견해 고쳤습니다: Next.js 16 standalone file-tracer(Turbopack)가 pnpm의 격리된 node_modules 레이아웃을 그대로 보존하지 못해, externalize된 패키지(`pg`, Prisma 7 생성 클라이언트)의 전이 의존성들이 빌드된 이미지에서 누락되어 있었고 — 컨테이너가 매번 시작 즉시 `Cannot find module '...'`로 크래시했습니다(Dockerfile 상단 주석 참고). `package.json`에 해당 패키지들을 명시적 직접 의존성으로 선언해 고쳤습니다. 앞으로 의존성/Next.js/pnpm을 업그레이드할 때는 반드시 실제 `docker build` + `docker compose --profile smoke up` + smoke test를 다시 실행해 이 문제가 재발하지 않았는지 확인하십시오 — `node .next/standalone/server.js`만으로는 이 클래스의 버그를 잡을 수 없습니다(이번에 실제로 놓쳤던 사례).
 
-### Docker Compose 기반 로컬 runtime smoke (Phase 10C)
+### Docker Compose 기반 로컬 runtime smoke
 
 `docker-compose.yml`에 postgres/redis/minio(기본 실행)와 `migrate`/`app`(둘 다 `smoke` profile - 평소 `docker compose up -d`에는 영향 없음)이 추가되었습니다:
 
@@ -72,9 +72,9 @@ SMOKE_BASE_URL=http://localhost:3000 pnpm smoke   # 인프라 + golden path, syn
 docker compose --profile smoke down
 ```
 
-`migrate`가 `app`과 다른 stage(`builder`)를 빌드하는 이유: 최종 `runner` 이미지는 standalone 서버 산출물만 담고 있어 `prisma` CLI나 `prisma/migrations`가 없습니다(§13의 "최소 파일") — migration은 반드시 전체 소스+devDependencies를 가진 `builder` stage(또는 CI 러너에서 직접, `staging-deploy.yml`이 실제로 하는 방식)에서 실행해야 합니다.
+`migrate`가 `app`과 다른 stage(`builder`)를 빌드하는 이유: 최종 `runner` 이미지는 standalone 서버 산출물만 담고 있어 `prisma` CLI나 `prisma/migrations`가 없습니다(이미지 크기를 최소화하기 위해 의도적으로 제외) — migration은 반드시 전체 소스+devDependencies를 가진 `builder` stage(또는 CI 러너에서 직접, `staging-deploy.yml`이 실제로 하는 방식)에서 실행해야 합니다.
 
-(Phase 11) `docker-compose.yml`의 모든 상시 서비스(`postgres`/`redis`/`minio`/`app`)는 `restart: unless-stopped`이고, `deploy.resources.limits`(CPU/메모리)와 `ulimits.nofile`이 설정되어 있습니다 - 이 값들은 소규모 단일 인스턴스 배포를 위한 **출발점**이지 튜닝된 운영 수치가 아니므로 실제 부하에 맞게 조정하십시오. `app`은 `/tmp`를 tmpfs(메모리, 256MB 상한)로 마운트해 컨테이너 자체 파일시스템이나 `storage` 볼륨을 임시 파일로 오염시키지 않습니다. `migrate`는 1회성 작업이라 의도적으로 `restart: "no"`입니다.
+`docker-compose.yml`의 모든 상시 서비스(`postgres`/`redis`/`minio`/`app`)는 `restart: unless-stopped`이고, `deploy.resources.limits`(CPU/메모리)와 `ulimits.nofile`이 설정되어 있습니다 - 이 값들은 소규모 단일 인스턴스 배포를 위한 **출발점**이지 튜닝된 운영 수치가 아니므로 실제 부하에 맞게 조정하십시오. `app`은 `/tmp`를 tmpfs(메모리, 256MB 상한)로 마운트해 컨테이너 자체 파일시스템이나 `storage` 볼륨을 임시 파일로 오염시키지 않습니다. `migrate`는 1회성 작업이라 의도적으로 `restart: "no"`입니다.
 
 ## Smoke test (`pnpm smoke`)
 
@@ -99,7 +99,7 @@ SMOKE_BASE_URL=https://<domain> pnpm smoke
 | `/api/health/ready`가 503 | 로그에서 `database`/`storage`/`rateLimit`/`config` 중 어느 체크가 실패했는지 확인 → DB 연결 문자열, storage 볼륨 마운트(또는 `FILE_STORAGE_DRIVER=s3`인 경우 버킷 접근 권한), Redis 연결(`RATE_LIMITER=redis`인 경우), 필수 환경변수 순으로 점검 |
 | smoke test 실패 | 즉시 이전 이미지로 롤백 (아래 "롤백" 참고) |
 
-## CI/CD 파이프라인 (Phase 10C)
+## CI/CD 파이프라인
 
 `.github/workflows/`:
 
@@ -113,9 +113,9 @@ SMOKE_BASE_URL=https://<domain> pnpm smoke
 | `nightly-real-infra.yml` | 매일 새벽, 수동 | 실제 Postmark/S3/Redis를 쓰는 opt-in 테스트(`*-real.test.ts`) — PR CI에는 절대 포함되지 않음, fork PR에는 secret이 전달되지 않아 실행 불가 |
 | `.github/dependabot.yml` | — | npm/Docker/GitHub Actions 주간 업데이트 PR |
 
-**주의**: `staging-deploy.yml`의 `deploy` job은 **의도적으로 placeholder**입니다 — 이 저장소에는 실제 staging 호스트/오케스트레이터(Kubernetes, ECS, SSH 대상 등)에 대한 정보가 없어, 실제 rollout 명령(`kubectl set image`, `aws ecs update-service`, SSH로 `docker compose pull && up -d` 등)은 그 자리에 직접 채워 넣어야 합니다. backup→migrate→deploy→readiness→smoke의 **순서와 게이팅**(앞 단계 실패 시 뒷 단계 미실행)이 이번 Phase의 실제 산출물입니다.
+**주의**: `staging-deploy.yml`의 `deploy` job은 **의도적으로 placeholder**입니다 — 이 저장소에는 실제 staging 호스트/오케스트레이터(Kubernetes, ECS, SSH 대상 등)에 대한 정보가 없어, 실제 rollout 명령(`kubectl set image`, `aws ecs update-service`, SSH로 `docker compose pull && up -d` 등)은 그 자리에 직접 채워 넣어야 합니다. backup→migrate→deploy→readiness→smoke의 **순서와 게이팅**(앞 단계 실패 시 뒷 단계 미실행)이 이 파이프라인이 실제로 보장하는 부분입니다.
 
-이 세션에는 GitHub remote/실제 GitHub Actions 실행 환경이 연결되어 있지 않아, 위 workflow들은 YAML 문법 검증(Python `yaml.safe_load`)만 거쳤을 뿐 **실제 GitHub-hosted runner에서 실행해 본 적은 없습니다**. 실제 리포지토리에 push한 뒤 반드시 한 번 실행 결과를 확인하십시오.
+위 workflow들은 YAML 문법 검증(Python `yaml.safe_load`)만 거쳤을 뿐 **실제 GitHub-hosted runner에서 실행해 본 적은 없습니다**(개발 환경에 GitHub remote 연결이 없었기 때문). 실제 리포지토리에 push한 뒤 반드시 한 번 실행 결과를 확인하십시오.
 
 ### 배포 롤백 (파이프라인 관점)
 

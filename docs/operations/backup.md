@@ -9,7 +9,7 @@ pnpm backup:storage --output=/var/backups/senecial --backup-id=$(date +%F)
 
 두 명령이 같은 `--backup-id`를 쓰면 하나의 manifest 파일(`<backup-id>.manifest.json`)로 병합됩니다. 순서는 상관없습니다(먼저 실행된 쪽이 나중 실행에 의해 덮어써지지 않음).
 
-## S3/R2 저장소는 `backup:storage`가 백업하지 않습니다 (Phase 10A, 중요)
+## S3/R2 저장소는 `backup:storage`가 백업하지 않습니다 (중요)
 
 `pnpm backup:storage`는 항상 `LOCAL_STORAGE_PATH`를 tar로 압축합니다 — `FILE_STORAGE_DRIVER=s3`를 쓰고 있어도, 또는 `ContractFile.storageProvider="s3"`인 행이 있어도 **S3/R2 버킷의 오브젝트는 이 명령으로 백업되지 않습니다**. 대용량 버킷을 매 백업마다 통째로 내려받아 tar로 묶는 것은 시간·비용·네트워크 측면에서 비현실적이기 때문에 의도적으로 제외했습니다.
 
@@ -24,7 +24,7 @@ S3/R2에 저장된 파일은 대신 공급자 자체 기능으로 보호하십�
 
 ## pg_dump/pg_restore 버전 호환성 (필수 확인)
 
-**`pg_dump`는 자신보다 최신인 PostgreSQL 서버에 대해 실행을 거부합니다** — `server version: 18.4; pg_dump version: 17.10` 같은 메시지와 함께 즉시 중단됩니다(Phase 9.1에서 실제로 재현·확인). 백업 전에 반드시 확인하십시오.
+**`pg_dump`는 자신보다 최신인 PostgreSQL 서버에 대해 실행을 거부합니다** — `server version: 18.4; pg_dump version: 17.10` 같은 메시지와 함께 즉시 중단됩니다(실제로 재현·확인된 동작입니다). 백업 전에 반드시 확인하십시오.
 
 ```bash
 pg_dump --version
@@ -39,7 +39,7 @@ PG_DUMP_BIN="/path/to/pg_dump" pnpm backup:db
 
 ## 운영 환경에서 실행하기
 
-`NODE_ENV=production`에서는 `--force` 플래그 또는 `BACKUP_CONFIRM=true` 환경변수 없이는 두 명령 모두 거부됩니다(대화형 프롬프트 없이 자동화에서 안전하게 쓸 수 있도록 — §9).
+`NODE_ENV=production`에서는 `--force` 플래그 또는 `BACKUP_CONFIRM=true` 환경변수 없이는 두 명령 모두 거부됩니다(대화형 프롬프트 없이 자동화에서 안전하게 쓸 수 있도록 하는 안전장치).
 
 ```bash
 BACKUP_CONFIRM=true pnpm backup:db --output=/var/backups/senecial
@@ -53,7 +53,7 @@ BACKUP_CONFIRM=true pnpm backup:db --output=/var/backups/senecial
 - `checksum` (DB/storage 각각)
 - manifest 경로
 
-## 암호화 (Phase 10C)
+## 암호화
 
 `BACKUP_ENCRYPTION_PROVIDER=age`가 실제 운영 암호화 구현체입니다 — [age](https://age-encryption.org)(X25519 + ChaCha20-Poly1305 STREAM, `age-encryption` npm 패키지, 직접 만든 암호 알고리즘 아님)로 DB dump/storage archive 전체를 스트리밍 암호화합니다. 필요한 환경변수:
 
