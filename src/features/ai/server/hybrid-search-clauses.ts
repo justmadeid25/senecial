@@ -107,8 +107,9 @@ async function hybridSearchClausesUncached(params: {
   question: string;
   topK: number;
   embeddingProvider: EmbeddingProvider;
+  contractId?: string;
 }): Promise<HybridSearchResultItem[]> {
-  const { organizationId, question, topK, embeddingProvider } = params;
+  const { organizationId, question, topK, embeddingProvider, contractId } = params;
   const normalizedQuestion = normalizeClauseText(question);
   const keywords = extractKeywords(question);
 
@@ -116,7 +117,7 @@ async function hybridSearchClausesUncached(params: {
 
   // Step 1 - ILIKE.
   const keywordStart = performance.now();
-  const keywordMatches = await findClauseKeywordMatchCounts(organizationId, keywords);
+  const keywordMatches = await findClauseKeywordMatchCounts(organizationId, keywords, contractId);
   const keywordDurationMs = performance.now() - keywordStart;
   recordDependencyLatency("keywordSearch", keywordDurationMs);
   if (exceedsLatencyBudget("keywordSearch", keywordDurationMs, false)) {
@@ -134,6 +135,7 @@ async function hybridSearchClausesUncached(params: {
     embeddingProvider: embeddingProvider.providerName,
     embeddingModel: embeddingProvider.modelName,
     topK: Math.max(topK * VECTOR_CANDIDATE_POOL_MULTIPLIER, MIN_VECTOR_CANDIDATE_POOL),
+    contractId,
   });
   const vectorScores = new Map(vectorCandidates.map((candidate) => [candidate.contractClauseId, candidate.vectorScore]));
 
@@ -152,7 +154,7 @@ async function hybridSearchClausesUncached(params: {
   const exactPhraseMatchIds = new Set<string>();
   if (normalizedQuestion.length > 0 && merged.length > 0) {
     const candidateClauses = await prisma.contractClause.findMany({
-      where: { id: { in: merged.map((c) => c.contractClauseId) }, organizationId },
+      where: { id: { in: merged.map((c) => c.contractClauseId) }, organizationId, ...(contractId ? { contractId } : {}) },
       select: { id: true, normalizedText: true },
     });
     for (const clause of candidateClauses) {
@@ -180,7 +182,11 @@ async function hybridSearchClausesUncached(params: {
   }
 
   const clauses = await prisma.contractClause.findMany({
-    where: { id: { in: reranked.map((r) => r.contractClauseId) }, organizationId },
+    where: {
+      id: { in: reranked.map((r) => r.contractClauseId) },
+      organizationId,
+      ...(contractId ? { contractId } : {}),
+    },
     select: { id: true, contractId: true, clauseNumber: true, title: true, text: true, contract: { select: { title: true } } },
   });
   const clauseById = new Map(clauses.map((clause) => [clause.id, clause]));
@@ -232,6 +238,8 @@ export async function hybridSearchClauses(params: {
   topK?: number;
   /** §Phase 13.1 Part 10 - the org-routed embedding provider (see get-embedding-provider-for-organization.ts). Defaults to the primary singleton for callers that haven't been updated for org-aware routing yet (the evaluation CLI, tests). */
   embeddingProvider?: EmbeddingProvider;
+  /** §AI 상담 개편 - when set, restricts retrieval to this one contract (still nested inside organizationId - never a substitute for it). */
+  contractId?: string;
 }): Promise<HybridSearchResultItem[]> {
   const topK = params.topK ?? DEFAULT_TOP_K;
   const cache = getCacheProvider();
@@ -245,6 +253,7 @@ export async function hybridSearchClauses(params: {
     organizationId: params.organizationId,
     question: params.question,
     topK,
+    contractId: params.contractId,
   });
 
   const currentChecksum = await getLatestEmbeddingGenerationChecksum(params.organizationId);
@@ -277,6 +286,7 @@ export async function hybridSearchClauses(params: {
       question: params.question,
       topK,
       embeddingProvider,
+      contractId: params.contractId,
     });
 
     const toCache: CachedRetrieval = { embeddingChecksum: currentChecksum, results };

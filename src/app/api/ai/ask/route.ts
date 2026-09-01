@@ -5,6 +5,7 @@ import type { Citation } from "@/domain/ai/citation";
 import { AiDisabledError, ExternalAiProcessingDisabledError } from "@/domain/ai/external-ai-policy";
 import { resolveRequestId } from "@/domain/logging/request-id";
 import { askQuestionStreaming } from "@/features/ai/server/ask-question";
+import { getContract } from "@/features/contracts/server/get-contract";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { errorResponse } from "@/lib/http/error-response";
 import { requireOrganizationMembership } from "@/lib/permissions";
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
       // `finally` (which only exists once the stream itself is built).
       let question: string;
       let conversationId: string | undefined;
+      let contractId: string | undefined;
       let conversation: Awaited<ReturnType<typeof createConversation>>;
       try {
         const body: unknown = await request.json();
@@ -72,7 +74,21 @@ export async function POST(request: Request) {
         if (!parsed.success) {
           throw new ValidationError(parsed.error.issues[0]?.message ?? "잘못된 요청입니다.");
         }
-        ({ question, conversationId } = parsed.data);
+        ({ question, conversationId, contractId } = parsed.data);
+
+        // §Tenant Isolation - a client-supplied contractId is never trusted
+        // as-is (the exact same discipline organizationId gets everywhere
+        // else in this codebase): getContract() re-verifies it belongs to
+        // THIS organization and is not soft-deleted, throwing the same
+        // NotFoundError as an unknown id - a contractId from another
+        // organization can never scope retrieval here.
+        if (contractId) {
+          await getContract({
+            userId: authContext.userId,
+            organizationId: authContext.organizationId,
+            contractId,
+          });
+        }
 
         const found = conversationId
           ? await findConversationById({
@@ -119,6 +135,7 @@ export async function POST(request: Request) {
               requestId,
               userId: authContext.userId,
               conversationId: conversation.id,
+              contractId,
             })) {
               if (clientDisconnected || request.signal.aborted) {
                 break;

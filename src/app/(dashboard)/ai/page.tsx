@@ -1,17 +1,22 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AiChat } from "@/features/ai/components/ai-chat";
 import { AiQaOpenedBeacon } from "@/features/ai/components/ai-qa-opened-beacon";
 import { getAiSearchPatternSummary } from "@/features/ai/server/get-ai-search-pattern-summary";
-import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
+import { getContract } from "@/features/contracts/server/get-contract";
+import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import { requireOrganizationMembership } from "@/lib/permissions";
 
 export const metadata: Metadata = { title: "AI 계약 상담 | Senecial" };
 
-export default async function AiPage() {
+export default async function AiPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ contractId?: string }>;
+}) {
   let authContext;
   try {
     authContext = await requireOrganizationMembership();
@@ -22,6 +27,30 @@ export default async function AiPage() {
     throw error;
   }
 
+  const { contractId } = await searchParams;
+
+  // §Tenant Isolation - identical discipline to /api/ai/ask: a contractId
+  // arriving via the URL is never trusted as-is. getContract() re-verifies
+  // it belongs to this organization (and is not soft-deleted), throwing
+  // NotFoundError - same as an unknown id - for anything else, so this
+  // page can never be used to confirm a contract exists in another org.
+  let scopedContract: { id: string; title: string } | undefined;
+  if (contractId) {
+    try {
+      const contract = await getContract({
+        userId: authContext.userId,
+        organizationId: authContext.organizationId,
+        contractId,
+      });
+      scopedContract = { id: contract.id, title: contract.title };
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        notFound();
+      }
+      throw error;
+    }
+  }
+
   const patternSummary = await getAiSearchPatternSummary({
     userId: authContext.userId,
     organizationId: authContext.organizationId,
@@ -29,7 +58,7 @@ export default async function AiPage() {
 
   return (
     <div className="space-y-6">
-      <AiQaOpenedBeacon />
+      <AiQaOpenedBeacon contractId={scopedContract?.id} />
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">AI 계약 상담</h1>
         <p className="text-sm text-muted-foreground">
@@ -38,7 +67,7 @@ export default async function AiPage() {
         </p>
       </div>
 
-      <AiChat />
+      <AiChat scopedContract={scopedContract} />
 
       {(patternSummary.topKeywordStems.length > 0 || patternSummary.topClauseTypes.length > 0) && (
         <Card>

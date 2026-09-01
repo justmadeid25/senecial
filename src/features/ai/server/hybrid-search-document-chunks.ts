@@ -109,15 +109,16 @@ async function hybridSearchDocumentChunksUncached(params: {
   question: string;
   topK: number;
   embeddingProvider: EmbeddingProvider;
+  contractId?: string;
 }): Promise<HybridSearchChunkResultItem[]> {
-  const { organizationId, question, topK, embeddingProvider } = params;
+  const { organizationId, question, topK, embeddingProvider, contractId } = params;
   const normalizedQuestion = normalizeClauseText(question);
   const keywords = extractKeywords(question);
 
   const retrievalStart = performance.now();
 
   const keywordStart = performance.now();
-  const keywordMatches = await findChunkKeywordMatchCounts(organizationId, keywords);
+  const keywordMatches = await findChunkKeywordMatchCounts(organizationId, keywords, contractId);
   const keywordDurationMs = performance.now() - keywordStart;
   recordDependencyLatency("keywordSearch", keywordDurationMs);
   if (exceedsLatencyBudget("keywordSearch", keywordDurationMs, false)) {
@@ -131,6 +132,7 @@ async function hybridSearchDocumentChunksUncached(params: {
     embeddingProvider: embeddingProvider.providerName,
     embeddingModel: embeddingProvider.modelName,
     topK: Math.max(topK * VECTOR_CANDIDATE_POOL_MULTIPLIER, MIN_VECTOR_CANDIDATE_POOL),
+    contractId,
   });
   const vectorScores = new Map(vectorCandidates.map((candidate) => [candidate.chunkId, candidate.vectorScore]));
   const vectorCandidateById = new Map(vectorCandidates.map((candidate) => [candidate.chunkId, candidate]));
@@ -147,7 +149,7 @@ async function hybridSearchDocumentChunksUncached(params: {
   const exactPhraseMatchIds = new Set<string>();
   if (normalizedQuestion.length > 0 && merged.length > 0) {
     const candidateChunks = await prisma.contractDocumentChunk.findMany({
-      where: { id: { in: merged.map((c) => c.chunkId) }, organizationId },
+      where: { id: { in: merged.map((c) => c.chunkId) }, organizationId, ...(contractId ? { contractId } : {}) },
       select: { id: true, normalizedText: true },
     });
     for (const chunk of candidateChunks) {
@@ -183,7 +185,7 @@ async function hybridSearchDocumentChunksUncached(params: {
   const hydratedChunks =
     missingIds.length > 0
       ? await prisma.contractDocumentChunk.findMany({
-          where: { id: { in: missingIds }, organizationId },
+          where: { id: { in: missingIds }, organizationId, ...(contractId ? { contractId } : {}) },
           select: {
             id: true,
             contractId: true,
@@ -258,6 +260,8 @@ export async function hybridSearchDocumentChunks(params: {
   question: string;
   topK?: number;
   embeddingProvider?: EmbeddingProvider;
+  /** §AI 상담 개편 - when set, restricts retrieval to this one contract (still nested inside organizationId - never a substitute for it). */
+  contractId?: string;
 }): Promise<HybridSearchChunkResultItem[]> {
   const topK = params.topK ?? DEFAULT_TOP_K;
   const cache = getCacheProvider();
@@ -267,7 +271,7 @@ export async function hybridSearchDocumentChunks(params: {
     `retrieval:chunk:${vectorSearchProvider.providerName}:${embeddingProvider.providerName}:` +
     `${embeddingProvider.modelName}:${embeddingProvider.dimension}:w${CHUNK_SEARCH_WEIGHT_VERSION}:` +
     `ch${DOCUMENT_CHUNKER_VERSION}:c${CITATION_VALIDATOR_VERSION}:` +
-    `${params.organizationId}:${hashCacheInput(params.question, String(topK))}`;
+    `${params.organizationId}:${hashCacheInput(params.question, String(topK), params.contractId ?? "")}`;
 
   const currentChecksum = await getLatestChunkEmbeddingGenerationChecksum(params.organizationId);
 
@@ -296,6 +300,7 @@ export async function hybridSearchDocumentChunks(params: {
       question: params.question,
       topK,
       embeddingProvider,
+      contractId: params.contractId,
     });
 
     const toCache: CachedChunkRetrieval = { embeddingChecksum: currentChecksum, results };

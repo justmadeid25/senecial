@@ -5,6 +5,7 @@ import type {
   ClauseVectorSearchProvider,
 } from "@/domain/ai/clause-vector-search-provider";
 import { latestAuthoritativeClauseSegmentationJobIdsForOrganization } from "@/server/repositories/ai-retrieval-freshness";
+import { EXCLUDE_TITLE_ONLY_PSEUDO_CLAUSE_PRISMA_WHERE } from "@/server/repositories/clause-evidence-eligibility";
 import { prisma } from "@/server/db/client";
 
 /**
@@ -36,7 +37,11 @@ export class ApplicationCosineClauseSearchProvider implements ClauseVectorSearch
         isLatest: true,
         provider: params.embeddingProvider,
         model: params.embeddingModel,
-        contractClause: { segmentationJobId: { in: eligibleJobIds } },
+        contractClause: {
+          segmentationJobId: { in: eligibleJobIds },
+          ...(params.contractId ? { contractId: params.contractId } : {}),
+          ...EXCLUDE_TITLE_ONLY_PSEUDO_CLAUSE_PRISMA_WHERE,
+        },
       },
       select: {
         contractClauseId: true,

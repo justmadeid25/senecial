@@ -30,7 +30,11 @@ export class ApplicationCosineDocumentChunkSearchProvider implements DocumentChu
         isLatest: true,
         provider: params.embeddingProvider,
         model: params.embeddingModel,
-        chunk: { contract: { deletedAt: null }, extractedDocumentId: { in: eligibleDocumentIds } },
+        chunk: {
+          contract: { deletedAt: null },
+          extractedDocumentId: { in: eligibleDocumentIds },
+          ...(params.contractId ? { contractId: params.contractId } : {}),
+        },
       },
       select: {
         chunkId: true,

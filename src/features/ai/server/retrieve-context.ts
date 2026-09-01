@@ -51,6 +51,8 @@ export async function retrieveContext(params: {
   question: string;
   topK?: number;
   embeddingProvider?: EmbeddingProvider;
+  /** §AI 상담 개편 - when set, restricts both retrieval legs to this one contract (still nested inside organizationId - never a substitute for it; the caller must have already verified the contract belongs to this organization). */
+  contractId?: string;
 }): Promise<Citation[]> {
   const topK =
     params.topK ?? (classifyQuestionComplexity(params.question) === "comprehensive" ? COMPREHENSIVE_TOP_K : DEFAULT_TOP_K);

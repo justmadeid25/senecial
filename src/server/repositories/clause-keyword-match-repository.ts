@@ -1,5 +1,6 @@
 import { KEYWORD_STEM_LENGTH } from "@/domain/ai/keyword-extraction";
 import { latestAuthoritativeClauseSegmentationJobIdsForOrganization } from "@/server/repositories/ai-retrieval-freshness";
+import { EXCLUDE_TITLE_ONLY_PSEUDO_CLAUSE_PRISMA_WHERE } from "@/server/repositories/clause-evidence-eligibility";
 import { prisma } from "@/server/db/client";
 
 /**
@@ -22,7 +23,8 @@ import { prisma } from "@/server/db/client";
  */
 export async function findClauseKeywordMatchCounts(
   organizationId: string,
-  keywords: string[]
+  keywords: string[],
+  contractId?: string
 ): Promise<Map<string, number>> {
   if (keywords.length === 0) {
     return new Map();
@@ -46,7 +48,11 @@ export async function findClauseKeywordMatchCounts(
       organizationId,
       contract: { deletedAt: null },
       segmentationJobId: { in: eligibleJobIds },
-      OR: stems.map((stem) => ({ normalizedText: { contains: stem, mode: "insensitive" as const } })),
+      ...(contractId ? { contractId } : {}),
+      AND: [
+        { OR: stems.map((stem) => ({ normalizedText: { contains: stem, mode: "insensitive" as const } })) },
+        EXCLUDE_TITLE_ONLY_PSEUDO_CLAUSE_PRISMA_WHERE,
+      ],
     },
     select: { id: true, normalizedText: true },
   });

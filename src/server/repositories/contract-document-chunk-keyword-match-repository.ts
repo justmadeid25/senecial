@@ -12,7 +12,8 @@ import { prisma } from "@/server/db/client";
  */
 export async function findChunkKeywordMatchCounts(
   organizationId: string,
-  keywords: string[]
+  keywords: string[],
+  contractId?: string
 ): Promise<Map<string, number>> {
   if (keywords.length === 0) {
     return new Map();
@@ -30,6 +31,7 @@ export async function findChunkKeywordMatchCounts(
       organizationId,
       contract: { deletedAt: null },
       extractedDocumentId: { in: eligibleDocumentIds },
+      ...(contractId ? { contractId } : {}),
       OR: stems.map((stem) => ({ normalizedText: { contains: stem, mode: "insensitive" as const } })),
     },
     select: { id: true, normalizedText: true },

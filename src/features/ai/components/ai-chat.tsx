@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { FileText, ScrollText } from "lucide-react";
+import { FileText, ScrollText, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -52,7 +52,18 @@ interface ChatMessage {
  * AbortController, which the Route Handler's ReadableStream `cancel()`
  * callback observes (see src/app/api/ai/ask/route.ts).
  */
-export function AiChat() {
+/**
+ * §AI 상담 개편 - `scopedContract` restricts this conversation's retrieval
+ * to one contract (threaded through to POST /api/ai/ask on every message
+ * in this session - see contractId in the fetch body below). Server-side,
+ * the contract detail page is the only entry point that sets this (via
+ * `/ai?contractId=...`, re-verified against the org in
+ * src/app/(dashboard)/ai/page.tsx) - never trust a client-only value for
+ * tenant isolation, but here it only narrows what evidence THIS user's OWN
+ * already-authorized request can see, so no separate re-check is needed on
+ * this component itself.
+ */
+export function AiChat({ scopedContract }: { scopedContract?: { id: string; title: string } }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -79,7 +90,11 @@ export function AiChat() {
       const response = await fetch("/api/ai/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed, conversationId: conversationIdRef.current }),
+        body: JSON.stringify({
+          question: trimmed,
+          conversationId: conversationIdRef.current,
+          contractId: scopedContract?.id,
+        }),
         signal: controller.signal,
       });
 
@@ -142,10 +157,33 @@ export function AiChat() {
 
   return (
     <div className="space-y-4">
+      {scopedContract && (
+        <div
+          data-testid="ai-scoped-contract-banner"
+          className="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm"
+        >
+          <span className="text-foreground">
+            <strong className="font-medium">{scopedContract.title}</strong>에 대해서만 질문하는 중입니다.
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            nativeButton={false}
+            render={<Link href="/ai" />}
+            className="gap-1 text-muted-foreground"
+          >
+            <X className="size-3.5" aria-hidden="true" />
+            전체 계약으로
+          </Button>
+        </div>
+      )}
+
       <div className="space-y-4">
         {messages.length === 0 && (
           <p className="text-sm text-muted-foreground">
-            계약에 대해 궁금한 점을 질문해 보세요. AI는 실제 계약 조항의 근거를 찾아 인용과 함께 답변합니다.
+            {scopedContract
+              ? `${scopedContract.title}에 대해 궁금한 점을 질문해 보세요. AI는 이 계약의 조항 근거를 찾아 인용과 함께 답변합니다.`
+              : "계약에 대해 궁금한 점을 질문해 보세요. AI는 실제 계약 조항의 근거를 찾아 인용과 함께 답변합니다."}
           </p>
         )}
         {messages.map((message, index) => {

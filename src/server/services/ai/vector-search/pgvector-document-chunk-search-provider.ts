@@ -72,6 +72,7 @@ export class PgVectorDocumentChunkSearchProvider implements DocumentChunkVectorS
         AND ce."vectorNative" IS NOT NULL
         AND c."deletedAt" IS NULL
         AND dc."extractedDocumentId" IN (${Prisma.join(eligibleDocumentIds)})
+        ${params.contractId ? Prisma.sql`AND dc."contractId" = ${params.contractId}` : Prisma.empty}
       ORDER BY "distance" ASC
       LIMIT ${params.topK}
     `;

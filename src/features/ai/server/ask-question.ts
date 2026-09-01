@@ -187,7 +187,13 @@ function buildPromptCacheKey(organizationId: string, llm: LlmProvider, messages:
  * needs one final string per golden-dataset question, not a live stream)
  * and by anywhere else that just wants a complete answer.
  */
-export async function askQuestion(params: { organizationId: string; question: string; userId?: string }): Promise<AskQuestionResult> {
+export async function askQuestion(params: {
+  organizationId: string;
+  question: string;
+  userId?: string;
+  /** §AI 상담 개편 - when set, restricts retrieval to this one contract; the caller must have already verified it belongs to organizationId (see src/app/api/ai/ask/route.ts). */
+  contractId?: string;
+}): Promise<AskQuestionResult> {
   assertQuestionWithinBudget(params.question);
   recordAiRequestStart();
   try {
@@ -208,6 +214,7 @@ export async function askQuestion(params: { organizationId: string; question: st
       organizationId: params.organizationId,
       question: params.question,
       embeddingProvider: embeddingSelection.provider,
+      contractId: params.contractId,
     });
     const guard = checkEvidenceSufficiency(citations, classifyQuestionComplexity(params.question));
 
@@ -348,6 +355,8 @@ export async function* askQuestionStreaming(params: {
   requestId?: string;
   userId?: string;
   conversationId?: string;
+  /** §AI 상담 개편 - when set, restricts retrieval to this one contract; the caller must have already verified it belongs to organizationId (see src/app/api/ai/ask/route.ts). */
+  contractId?: string;
 }): AsyncGenerator<AskQuestionStreamEvent> {
   assertQuestionWithinBudget(params.question);
   recordAiRequestStart();
@@ -367,6 +376,7 @@ export async function* askQuestionStreaming(params: {
       organizationId: params.organizationId,
       question: params.question,
       embeddingProvider: embeddingSelection.provider,
+      contractId: params.contractId,
     });
     const guard = checkEvidenceSufficiency(citations, classifyQuestionComplexity(params.question));
 

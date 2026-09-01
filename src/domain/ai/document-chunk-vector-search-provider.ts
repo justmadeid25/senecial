@@ -26,6 +26,8 @@ export interface DocumentChunkVectorSearchParams {
   embeddingProvider: string;
   embeddingModel: string;
   topK: number;
+  /** §AI 상담 개편 - when set, restricts candidates to this one contract (still nested inside the organizationId scope, never a substitute for it). */
+  contractId?: string;
 }
 
 export interface DocumentChunkVectorSearchProvider {

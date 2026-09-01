@@ -11,6 +11,8 @@ export interface RetrievalCacheKeyParams {
   organizationId: string;
   question: string;
   topK: number;
+  /** §AI 상담 개편 - when set, this cache entry is scoped to one contract; must be part of the key so a contract-scoped result never serves an org-wide (or a different contract's) request. */
+  contractId?: string;
 }
 
 /**
@@ -38,6 +40,6 @@ export function buildRetrievalCacheKey(params: RetrievalCacheKeyParams): string 
     `retrieval:${params.vectorSearchProviderName}:${params.embeddingProviderName}:` +
     `${params.embeddingModelName}:${params.embeddingDimension}:w${SEARCH_WEIGHT_VERSION}:` +
     `p${PROMPT_TEMPLATE_VERSION}:c${CITATION_VALIDATOR_VERSION}:` +
-    `${params.organizationId}:${hashCacheInput(params.question, String(params.topK))}`
+    `${params.organizationId}:${hashCacheInput(params.question, String(params.topK), params.contractId ?? "")}`
   );
 }

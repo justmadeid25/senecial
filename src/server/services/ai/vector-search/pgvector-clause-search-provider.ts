@@ -8,6 +8,7 @@ import { VECTOR_NATIVE_DIMENSION } from "@/domain/ai/vector-search-config";
 import { cosineDistanceToSimilarity } from "@/domain/ai/vector-distance";
 import { serializeVectorForPg } from "@/domain/ai/vector-validation";
 import { latestAuthoritativeClauseSegmentationJobIdsForOrganization } from "@/server/repositories/ai-retrieval-freshness";
+import { EXCLUDE_TITLE_ONLY_PSEUDO_CLAUSE_SQL } from "@/server/repositories/clause-evidence-eligibility";
 import { prisma } from "@/server/db/client";
 
 interface PgVectorRow {
@@ -77,6 +78,8 @@ export class PgVectorClauseSearchProvider implements ClauseVectorSearchProvider 
         AND ce."vectorNative" IS NOT NULL
         AND c."deletedAt" IS NULL
         AND cc."segmentationJobId" IN (${Prisma.join(eligibleJobIds)})
+        ${EXCLUDE_TITLE_ONLY_PSEUDO_CLAUSE_SQL}
+        ${params.contractId ? Prisma.sql`AND cc."contractId" = ${params.contractId}` : Prisma.empty}
       ORDER BY "distance" ASC
       LIMIT ${params.topK}
     `;
