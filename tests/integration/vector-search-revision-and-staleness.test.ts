@@ -46,6 +46,18 @@ async function insertClauseWithEmbedding(params: {
   orderIndex: number;
   text: string;
   vectorNative: "populate" | "null";
+  // §AI 상담 개편 investigation fix - real segmenter output ALWAYS sets
+  // clauseNumber/title for a genuine "제N조(제목)" match (see
+  // clause-number-patterns.ts's detectClauseNumberLine()); only the
+  // segmenter's own implicit "preamble" (no marker found) clause has both
+  // null, which is exactly the shape EXCLUDE_TITLE_ONLY_PSEUDO_CLAUSE_*
+  // (clause-evidence-eligibility.ts) is designed to filter out. These
+  // synthetic fixture clauses represent real, numbered articles - they
+  // must carry realistic clauseNumber/title so they are eligible for the
+  // same reason a real segmenter-produced row would be, not because the
+  // eligibility filter was weakened or bypassed for this test.
+  clauseNumber: string;
+  title: string;
 }): Promise<string> {
   const clauseId = randomUUID();
   const normalizedText = normalizeClauseText(params.text);
@@ -56,6 +68,8 @@ async function insertClauseWithEmbedding(params: {
       contractId,
       extractedDocumentId: params.extractedDocumentId,
       segmentationJobId: params.segmentationJobId,
+      clauseNumber: params.clauseNumber,
+      title: params.title,
       text: params.text,
       normalizedText,
       orderIndex: params.orderIndex,
@@ -172,6 +186,8 @@ beforeAll(async () => {
     segmentationJobId: staleJob.id,
     extractedDocumentId: document.id,
     orderIndex: 500,
+    clauseNumber: "제1조",
+    title: "과거 리비전 조항",
     text: "제1조(과거 리비전 조항) 이 조항은 과거(재분해로 대체된) 리비전에 속하며 검색에 나타나서는 안 됩니다.",
     vectorNative: "populate",
   });
@@ -180,6 +196,8 @@ beforeAll(async () => {
     segmentationJobId: currentJob.id,
     extractedDocumentId: document.id,
     orderIndex: 501,
+    clauseNumber: "제2조",
+    title: "현재 리비전 조항",
     text: "제2조(현재 리비전 조항) 이 조항은 현재 리비전에 속하며 검색에 나타나야 합니다.",
     vectorNative: "populate",
   });
@@ -188,6 +206,8 @@ beforeAll(async () => {
     segmentationJobId: currentJob.id,
     extractedDocumentId: document.id,
     orderIndex: 502,
+    clauseNumber: "제3조",
+    title: "아직 백필되지 않은 조항",
     text: "제3조(아직 백필되지 않은 조항) 이 조항은 vectorNative가 아직 채워지지 않은 상태를 시뮬레이션합니다.",
     vectorNative: "null",
   });
