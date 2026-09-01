@@ -44,6 +44,7 @@ async function logIn(page: import("@playwright/test").Page, email: string) {
 
 let counterpartyUrl = "";
 let contractUrl = "";
+let downloadUrl: string | null = "";
 
 test.describe.serial("counterparty CRUD, file upload/download/delete, and isolation", () => {
   test("signup creates the owner account", async ({ page }) => {
@@ -144,11 +145,31 @@ test.describe.serial("counterparty CRUD, file upload/download/delete, and isolat
     await logIn(page, ownerEmail);
     await page.goto(contractUrl);
 
+    downloadUrl = await page.getByRole("link", { name: "다운로드" }).getAttribute("href");
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       page.getByRole("link", { name: "다운로드" }).click(),
     ]);
     expect(download.suggestedFilename()).toBe("e2e-계약서.pdf");
+  });
+
+  // §Phase 14 Part 2 - RELEASE BLOCKER #1 (cross-tenant isolation) - a
+  // deliberate adversarial attack: a second organization's authenticated
+  // user hits the FIRST organization's real file download URL directly
+  // (not through the UI, which never shows a link to a file that isn't
+  // theirs - this bypasses the UI entirely and exercises the actual route
+  // handler's own authorization, matching how a real attacker who somehow
+  // learned/guessed the URL would behave). The download route's own triple
+  // scope check (contract must belong to the actor's org AND the file must
+  // belong to both that org and that contract - never just a bare file id)
+  // must reject this with 404, never the real file bytes.
+  test("a second organization cannot download the first organization's file via its real URL (cross-tenant attack)", async ({ page }) => {
+    expect(downloadUrl, "download URL must have been captured by the prior test").toBeTruthy();
+    await logIn(page, otherOwnerEmail);
+    const response = await page.request.get(downloadUrl!);
+    expect(response.status()).toBe(404);
+    const body = await response.text();
+    expect(body).not.toContain("%PDF");
   });
 
   test("owner deletes the file and it disappears from the list", async ({ page }) => {
