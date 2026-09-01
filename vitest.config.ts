@@ -30,6 +30,10 @@ const QUEUE_TEST_FILES = [
   // processNextExtractionJob()/processNextChunkEmbeddingJob().
   "tests/integration/document-chunk-embedding-pipeline.test.ts",
   "tests/integration/ai-chunk-tenant-isolation.test.ts",
+  // §AI 상담 개편 - same globally-oldest-PENDING-row claim shape via
+  // processNextExtractionJob()/processNextClauseSegmentationJob()/
+  // processNextEmbeddingJob()/processNextChunkEmbeddingJob().
+  "tests/integration/ai-contract-scoping.test.ts",
   "tests/integration/ai-prompt-cache-tenant-isolation.test.ts",
   "tests/integration/ai-release-gate-audit.test.ts",
   "tests/integration/ai-revision-freshness.test.ts",

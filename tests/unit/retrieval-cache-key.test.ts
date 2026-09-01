@@ -73,3 +73,49 @@ describe("buildRetrievalCacheKey (Phase 12.1 §15/§20 - provider-specific cache
     expect(key).toContain(`c${CITATION_VALIDATOR_VERSION}`);
   });
 });
+
+/**
+ * §AI 상담 개편 - regression coverage for the contractId fragment added to
+ * buildRetrievalCacheKey() (see that function's own docstring). A cache
+ * key collision here would mean a contract-scoped retrieval result could
+ * be served back for an unscoped (or differently-scoped) request -
+ * exactly the leak hybridSearchClauses/hybridSearchDocumentChunks rely on
+ * this function to prevent.
+ */
+describe("buildRetrievalCacheKey - contractId isolation (§AI 상담 개편)", () => {
+  it("an unscoped key and a contract-scoped key (same org/question/topK) are different", () => {
+    const unscoped = buildRetrievalCacheKey(baseParams());
+    const scoped = buildRetrievalCacheKey(baseParams({ contractId: "contract-a" }));
+    expect(scoped).not.toBe(unscoped);
+  });
+
+  it("two different contractIds (same org/question/topK) produce different keys", () => {
+    const keyA = buildRetrievalCacheKey(baseParams({ contractId: "contract-a" }));
+    const keyB = buildRetrievalCacheKey(baseParams({ contractId: "contract-b" }));
+    expect(keyA).not.toBe(keyB);
+  });
+
+  it("omitting contractId and passing contractId: undefined produce the identical key (both mean 'unscoped')", () => {
+    const omitted = buildRetrievalCacheKey(baseParams());
+    const explicitUndefined = buildRetrievalCacheKey(baseParams({ contractId: undefined }));
+    expect(explicitUndefined).toBe(omitted);
+  });
+
+  it("is deterministic - the same params (including contractId) always build the same key", () => {
+    const params = baseParams({ contractId: "contract-a" });
+    expect(buildRetrievalCacheKey(params)).toBe(buildRetrievalCacheKey(params));
+  });
+
+  it("still varies with every other pre-existing fragment when contractId is held constant (no regression from adding contractId)", () => {
+    const params = baseParams({ contractId: "contract-a" });
+    const baseline = buildRetrievalCacheKey(params);
+
+    expect(buildRetrievalCacheKey({ ...params, vectorSearchProviderName: "application" })).not.toBe(baseline);
+    expect(buildRetrievalCacheKey({ ...params, embeddingProviderName: "openai" })).not.toBe(baseline);
+    expect(buildRetrievalCacheKey({ ...params, embeddingModelName: "text-embedding-3-small" })).not.toBe(baseline);
+    expect(buildRetrievalCacheKey({ ...params, embeddingDimension: 1536 })).not.toBe(baseline);
+    expect(buildRetrievalCacheKey({ ...params, organizationId: "org-2" })).not.toBe(baseline);
+    expect(buildRetrievalCacheKey({ ...params, question: "다른 질문입니다" })).not.toBe(baseline);
+    expect(buildRetrievalCacheKey({ ...params, topK: 5 })).not.toBe(baseline);
+  });
+});

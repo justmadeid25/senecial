@@ -40,6 +40,7 @@ let owner: { id: string };
 let ownerB: { id: string };
 let contractId: string;
 let deletedContractId: string;
+let secondContractId: string;
 const createdFileStorageKeys: string[] = [];
 
 async function buildDocxBuffer(lines: string[]): Promise<Buffer> {
@@ -144,6 +145,19 @@ beforeAll(async () => {
     lines: ["제1조(해지)", "어느 일방이 본 계약을 위반한 경우 상대방은 서면 통지로 즉시 계약을 해지할 수 있다."],
   });
 
+  // §AI 상담 개편 - a SECOND, live (never soft-deleted) contract in orgA
+  // with the SAME termination-clause wording as `contractId`'s. The
+  // deletedAt filter can't distinguish these two contracts from each
+  // other, so this is the only fixture in this file that can actually
+  // prove the `contractId` param (not just organizationId/deletedAt)
+  // is applied by each concrete provider.
+  secondContractId = await uploadAndProcessContract({
+    organizationId: orgA.id,
+    userId: owner.id,
+    title: "두 번째 계약 (contractId 범위 지정 확인용)",
+    lines: ["제1조(계약 해지)", "어느 일방이 본 계약을 위반한 경우 상대방은 서면 통지로 즉시 계약을 해지할 수 있다."],
+  });
+
   await uploadAndProcessContract({
     organizationId: orgB.id,
     userId: ownerB.id,
@@ -200,6 +214,14 @@ for (const [providerName, ProviderClass] of [
       // complete, correctly-ordered result set.
       const results = await provider.search({
         organizationId: orgA.id,
+        // §AI 상담 개편 - scoped to `contractId` specifically: orgA also
+        // has `secondContractId` (added for the contractId-scoping test
+        // below), whose own live clause would otherwise also be an
+        // eligible candidate for this org-wide query and change the
+        // expected count below for a reason unrelated to what this test
+        // actually verifies (result completeness/ordering for one
+        // contract's clauses).
+        contractId,
         queryVector: buildQueryVector("계약을 해지하려면 어떻게 해야 하나요?"),
         embeddingProvider: EMBEDDING_PROVIDER,
         embeddingModel: EMBEDDING_MODEL,
@@ -244,6 +266,34 @@ for (const [providerName, ProviderClass] of [
         where: { contractClause: { contractId: deletedContractId } },
       });
       expect(stillHasEmbedding).not.toBeNull(); // sanity - the exclusion is a query-time filter, not "never embedded"
+    });
+
+    it("§AI 상담 개편 - when contractId is set, only returns that contract's clause, even though a second live contract in the same org has the identical wording", async () => {
+      const results = await provider.search({
+        organizationId: orgA.id,
+        queryVector: buildQueryVector("계약을 해지하려면 어떻게 해야 하나요?"),
+        embeddingProvider: EMBEDDING_PROVIDER,
+        embeddingModel: EMBEDDING_MODEL,
+        topK: 20,
+        contractId,
+      });
+      expect(results.length).toBeGreaterThan(0);
+      for (const result of results) {
+        expect(result.contractId).toBe(contractId);
+      }
+
+      const secondResults = await provider.search({
+        organizationId: orgA.id,
+        queryVector: buildQueryVector("계약을 해지하려면 어떻게 해야 하나요?"),
+        embeddingProvider: EMBEDDING_PROVIDER,
+        embeddingModel: EMBEDDING_MODEL,
+        topK: 20,
+        contractId: secondContractId,
+      });
+      expect(secondResults.length).toBeGreaterThan(0);
+      for (const result of secondResults) {
+        expect(result.contractId).toBe(secondContractId);
+      }
     });
 
     it("returns an empty array (never throws) for an organization with no eligible content", async () => {

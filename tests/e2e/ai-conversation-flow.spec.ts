@@ -3,8 +3,6 @@ import { execFileSync } from "node:child_process";
 import { Document, Packer, Paragraph } from "docx";
 import { expect, test } from "@playwright/test";
 
-import { cardByHeading } from "./helpers/scoping";
-
 /**
  * Full Phase 12 pipeline E2E coverage: upload -> extraction worker ->
  * segmentation worker -> embedding worker -> /ai chat (real streaming,
@@ -116,7 +114,25 @@ test.describe.serial("AI conversation: real citation + hallucination-guard fallb
     // exercises for the first time. 120s is a real measured-worst-case
     // budget, not a guess; test.setTimeout(180_000) above still leaves
     // headroom for the rest of this test after it.
-    await expect(cardByHeading(page, "첨부 파일").getByText("ai-e2e-source.docx")).toBeVisible({ timeout: 120_000 });
+    //
+    // §Investigation (2026-09) - was `cardByHeading(page, "첨부
+    // 파일").getByText(filename)`, which is a FALSE-POSITIVE-PRONE
+    // assertion: ContractFileUploadForm and ContractFileList share the
+    // same "첨부 파일" Card (see contracts/[id]/page.tsx), and the upload
+    // form's own client-side `fileName` state renders the selected
+    // filename as soon as a file is picked - and stays rendered after a
+    // FAILED submit (handleSubmit only calls setFileName(null) on
+    // success) - so that assertion could pass even when the server-side
+    // upload genuinely failed. ContractFileList renders a real <table>
+    // only when `files.length > 0` (a plain <p> otherwise, and the
+    // upload form never renders a table at all), so scoping to the table
+    // role is an unambiguous signal that the file is actually attached,
+    // not just locally selected.
+    // .first() - Next dev-mode (Turbopack/React Strict Mode) can briefly
+    // double-render this server-rendered table; the DB has exactly one
+    // real ContractFile row (verified directly), so matching the first
+    // occurrence is correct, not a workaround for a real duplicate.
+    await expect(page.getByRole("table").getByText("ai-e2e-source.docx").first()).toBeVisible({ timeout: 120_000 });
 
     // §Phase 15.1 - upload auto-starts the extraction job - no click needed here.
     runWorker("scripts/process-extraction-jobs.ts");
@@ -170,5 +186,182 @@ test.describe.serial("AI conversation: real citation + hallucination-guard fallb
     await expect(page.getByTestId("ai-message-assistant").last()).toContainText("근거를 충분히 찾지 못했습니다", {
       timeout: 15_000,
     });
+  });
+});
+
+const scopingOwnerEmail = `ai-e2e-scoping-owner-${runId}@e2e-test.local`;
+const scopingContractTitle = `AI 상담 범위 지정 E2E 계약 ${runId}`;
+
+async function signUpAs(
+  page: import("@playwright/test").Page,
+  params: { name: string; companyName: string; email: string }
+) {
+  await page.goto("/signup");
+  await page.getByLabel("이름").fill(params.name);
+  await page.getByLabel("회사명").fill(params.companyName);
+  await page.getByLabel("이메일").fill(params.email);
+  await page.getByLabel("비밀번호", { exact: true }).fill(password);
+  await page.getByLabel("비밀번호 확인").fill(password);
+  await page.getByRole("button", { name: "회원가입" }).click();
+  await page.waitForURL(/\/login/);
+}
+
+async function logInAs(page: import("@playwright/test").Page, email: string) {
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await page.getByLabel("이메일").fill(email);
+  await page.getByLabel("비밀번호").fill(password);
+  await page.getByRole("button", { name: "로그인" }).click();
+  await page.waitForURL(/\/dashboard/);
+}
+
+let scopingContractUrl = "";
+
+/**
+ * §AI 상담 개편 - a fully self-contained fixture (its own owner/org/contract),
+ * deliberately NOT sharing `contractUrl`/`ownerEmail` with the describe block
+ * above: module-level state set inside one `test.describe` block was found
+ * (empirically, via this test) to NOT reliably survive into a later
+ * `test.describe` block in this Playwright setup, even under `workers: 1` /
+ * `fullyParallel: false` - depending on it left every test below silently
+ * running against an empty contractId. A dedicated fixture also means this
+ * suite's own signal is never blocked by an unrelated failure earlier in the
+ * file.
+ *
+ * Only the "sees the scoped banner and gets a citation" test lives here -
+ * it needs the real upload/extraction/segmentation/embedding pipeline
+ * below. The not-found tests (foreign org / invalid id) don't need any of
+ * that (getContract() only checks existence/ownership, never file
+ * content), so they live in their own, much cheaper describe block below
+ * this one with a bare contract and no upload step.
+ */
+test.describe.serial("AI conversation: contract-scoped chat + tenant isolation (§AI 상담 개편)", () => {
+  test.setTimeout(180_000);
+
+  test("owner sets up a second, independent contract with segmented, embedded clauses (dedicated fixture for scoping tests)", async ({
+    page,
+  }) => {
+    await signUpAs(page, { name: "AI E2E Scoping Owner", companyName: "AI E2E Scoping Co", email: scopingOwnerEmail });
+    await logInAs(page, scopingOwnerEmail);
+
+    await page.goto("/contracts/new");
+    await page.getByLabel("계약명 *").fill(scopingContractTitle);
+    await page.getByLabel("계약 유형 *").click();
+    await page.getByRole("option", { name: "용역계약" }).click();
+    await page.getByRole("button", { name: "계약 생성" }).click();
+    await page.waitForURL(/\/contracts\/(?!new$)[a-z0-9]{20,}$/);
+    scopingContractUrl = new URL(page.url()).pathname;
+
+    const docxBuffer = await buildContractDocxBuffer([
+      "AI 상담 범위 지정 E2E 테스트 계약서",
+      "제1조(계약 해지)",
+      TERMINATION_TEXT,
+      "제2조(비밀유지)",
+      CONFIDENTIALITY_TEXT,
+    ]);
+
+    await page.goto(scopingContractUrl);
+    await page.waitForLoadState("networkidle");
+    await page.setInputFiles("#contract-file", {
+      name: "ai-e2e-scoping-source.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: docxBuffer,
+    });
+    await page.getByRole("button", { name: "업로드" }).click();
+    // §Investigation (2026-09) - see the identical comment on the
+    // describe block above for why this is scoped to the real file table
+    // rather than the whole "첨부 파일" card.
+    // .first() - see the identical comment on the describe block above.
+    await expect(page.getByRole("table").getByText("ai-e2e-scoping-source.docx").first()).toBeVisible({
+      timeout: 120_000,
+    });
+
+    runWorker("scripts/process-extraction-jobs.ts");
+
+    await page.goto(scopingContractUrl);
+    await expect(page.getByText("계약 조항 분해")).toBeVisible();
+    await expect(page.getByRole("button", { name: "조항 분해 시작" })).toHaveCount(0);
+    await expect(page.getByText("대기 중")).toBeVisible();
+    runWorker("scripts/process-clause-segmentation-jobs.ts");
+    runWorker("scripts/process-embedding-jobs.ts");
+  });
+
+  test("the owning organization's user hitting /ai?contractId=<its own contract id> sees the scoped banner and gets a citation restricted to it", async ({
+    page,
+  }) => {
+    const contractId = scopingContractUrl.split("/").pop()!;
+    expect(contractId.length).toBeGreaterThan(0);
+
+    await logInAs(page, scopingOwnerEmail);
+    const response = await page.goto(`/ai?contractId=${contractId}`);
+    expect(response?.status()).toBe(200);
+    await expect(page.getByTestId("ai-scoped-contract-banner")).toContainText(scopingContractTitle);
+
+    await page.getByPlaceholder("예: 이 계약의 해지 조건은 무엇인가요?").fill("계약을 해지하려면 어떻게 해야 하나요?");
+    await page.getByRole("button", { name: "질문하기" }).click();
+
+    const assistantMessage = page.getByTestId("ai-message-assistant").last();
+    await expect(assistantMessage).toContainText("해지", { timeout: 15_000 });
+    await expect(assistantMessage).toContainText(scopingContractTitle, { timeout: 15_000 });
+  });
+
+});
+
+/**
+ * §AI 상담 개편 - the not-found cases need only a real, existing contract
+ * (getContract() checks existence/organization ownership - never file
+ * content), so this fixture is deliberately just a bare
+ * signup+contract-create with NO upload/extraction/segmentation step.
+ * Kept separate from the describe block above so these two assertions get
+ * a clean, independent signal that never depends on the upload/extraction
+ * pipeline the citation test above needs.
+ */
+test.describe.serial("AI conversation: not-found handling for bad contractId (§AI 상담 개편)", () => {
+  test.setTimeout(30_000);
+
+  const notFoundOwnerEmail = `ai-e2e-notfound-owner-${runId}@e2e-test.local`;
+  const notFoundOtherOwnerEmail = `ai-e2e-notfound-other-${runId}@e2e-test.local`;
+  const notFoundContractTitle = `AI 상담 not-found E2E 계약 ${runId}`;
+  let notFoundContractUrl = "";
+
+  test("owner creates a bare contract (no file needed for these assertions)", async ({ page }) => {
+    await signUpAs(page, {
+      name: "AI E2E NotFound Owner",
+      companyName: "AI E2E NotFound Co",
+      email: notFoundOwnerEmail,
+    });
+    await logInAs(page, notFoundOwnerEmail);
+
+    await page.goto("/contracts/new");
+    await page.getByLabel("계약명 *").fill(notFoundContractTitle);
+    await page.getByLabel("계약 유형 *").click();
+    await page.getByRole("option", { name: "용역계약" }).click();
+    await page.getByRole("button", { name: "계약 생성" }).click();
+    await page.waitForURL(/\/contracts\/(?!new$)[a-z0-9]{20,}$/);
+    notFoundContractUrl = new URL(page.url()).pathname;
+  });
+
+  test("a second organization's user hitting /ai?contractId=<first org's real contract id> gets not-found, never the scoped chat", async ({
+    page,
+  }) => {
+    const contractId = notFoundContractUrl.split("/").pop()!;
+    expect(contractId.length).toBeGreaterThan(0); // sanity - the fixture test above must have run first
+
+    await signUpAs(page, {
+      name: "AI E2E NotFound Other Owner",
+      companyName: "AI E2E NotFound Other Co",
+      email: notFoundOtherOwnerEmail,
+    });
+    await logInAs(page, notFoundOtherOwnerEmail);
+
+    const response = await page.goto(`/ai?contractId=${contractId}`);
+    expect(response?.status()).toBe(404);
+    await expect(page.getByTestId("ai-scoped-contract-banner")).toHaveCount(0);
+  });
+
+  test("an invalid/non-existent contractId is also not-found, not a crash", async ({ page }) => {
+    await logInAs(page, notFoundOwnerEmail);
+    const response = await page.goto("/ai?contractId=nonexistent-id-does-not-exist");
+    expect(response?.status()).toBe(404);
   });
 });

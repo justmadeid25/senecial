@@ -49,6 +49,24 @@ const e2eStoragePath = path.join("tmp", "e2e-storage", e2eRunId);
 // spawns any test workers, makes every process in the tree agree on the
 // one real directory.
 //
+// §Investigation (create-contract -> immediate-upload -> auto-extract E2E
+// failure) - that intent was NOT actually achieved: Playwright's own CLI
+// process (which spawns `webServer`) and each test-WORKER process (which
+// runs this file's `test()` bodies, including any execFileSync() worker
+// call) each independently re-evaluate this entire config module as
+// separate OS processes - `Date.now()-process.pid` computes a genuinely
+// DIFFERENT fallback e2eRunId in each, so the CLI process's webServer
+// wrote uploaded files under ONE tmp/e2e-storage/{runId}, while a test
+// worker's own execFileSync()'d CLI script (e.g. runWorker() in
+// ai-conversation-flow.spec.ts) looked under a DIFFERENT one - a genuine,
+// deterministic (never coincidentally equal) mismatch, confirmed live via
+// a headed run with temporary logging in both processes. Persisting
+// E2E_RUN_ID itself (not just its derived LOCAL_STORAGE_PATH) into
+// process.env here means a spawned worker process - which inherits this
+// CLI process's env - sees E2E_RUN_ID already set on its OWN evaluation
+// of this file and reuses it instead of computing a fresh fallback,
+// making e2eRunId (and therefore e2eStoragePath) identical everywhere.
+//
 // Gated on `!smokeBaseUrl`, exactly like the webServer block below: when
 // SMOKE_BASE_URL is set, this config does not own the server -
 // scripts/run-e2e-prod.ts does, and it already threads its OWN correct
@@ -59,6 +77,7 @@ const e2eStoragePath = path.join("tmp", "e2e-storage", e2eRunId);
 // like release-gate run the exact same way this line was meant to fix
 // for the plain-dev-server run.
 if (!smokeBaseUrl) {
+  process.env.E2E_RUN_ID = e2eRunId;
   process.env.LOCAL_STORAGE_PATH = e2eStoragePath;
 }
 
