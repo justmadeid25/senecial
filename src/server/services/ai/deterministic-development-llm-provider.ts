@@ -51,7 +51,15 @@ export class DeterministicDevelopmentLlmProvider implements LlmProvider {
   readonly modelName = "extractive-summary-v1";
 
   private buildAnswerText(messages: LlmMessage[]): string {
-    const userMessage = messages.find((m) => m.role === "user");
+    // §AI 답변 품질 개편 P0-1 - the LAST user-role message, never the
+    // first: buildPromptMessages() now inserts bounded conversation
+    // HISTORY as additional user/assistant turns BEFORE the current turn's
+    // real user message (see prompt-builder.ts), so a prior turn's plain
+    // question text (no [CITATION] blocks at all) can also be role="user".
+    // The current turn's message - the one actually carrying this
+    // request's real CITATION blocks - is always the LAST message
+    // buildPromptMessages() constructs, by contract.
+    const userMessage = [...messages].reverse().find((m) => m.role === "user");
     const citationBlocks = userMessage ? parseCitationBlocks(userMessage.content) : [];
 
     if (citationBlocks.length === 0) {

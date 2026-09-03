@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AiBudgetExceededError } from "@/domain/ai/ai-budget-error";
-import type { Citation } from "@/domain/ai/citation";
+import { selectRecentConversationHistory } from "@/domain/ai/conversation-context";
 import { AiDisabledError, ExternalAiProcessingDisabledError } from "@/domain/ai/external-ai-policy";
 import { resolveRequestId } from "@/domain/logging/request-id";
 import { askQuestionStreaming } from "@/features/ai/server/ask-question";
@@ -16,6 +16,7 @@ import {
   addMessage,
   createConversation,
   findConversationById,
+  listMessagesForConversation,
 } from "@/server/repositories/ai-conversation-repository";
 import { withRouteMetrics } from "@/server/monitoring/metrics";
 import { getAiRuntimeConfiguration } from "@/server/services/ai/get-ai-runtime-configuration";
@@ -68,6 +69,11 @@ export async function POST(request: Request) {
       let conversationId: string | undefined;
       let contractId: string | undefined;
       let conversation: Awaited<ReturnType<typeof createConversation>>;
+      // §AI 답변 품질 개편 P0-1 - bounded, ALREADY re-verified (org + user +
+      // contract scope, exactly like `conversation` itself) recent turns -
+      // never trusted from any client-supplied field, only ever populated
+      // from listMessagesForConversation()'s own scoped query below.
+      let history: ReturnType<typeof selectRecentConversationHistory> = [];
       try {
         const body: unknown = await request.json();
         const parsed = askQuestionSchema.safeParse(body);
@@ -100,11 +106,32 @@ export async function POST(request: Request) {
               organizationId: authContext.organizationId,
               userId: authContext.userId,
               title: question.slice(0, 60),
+              contractId,
             });
         if (!found) {
           throw new NotFoundError();
         }
+        // §Tenant Isolation / §AI 답변 품질 개편 P0-1 - a conversationId's
+        // scope is set ONCE at creation (Conversation.contractId) and can
+        // never be widened or narrowed by a later request: reusing a
+        // contract-scoped conversationId for a DIFFERENT contractId (or for
+        // no contractId at all), or reusing an org-wide conversationId
+        // WITH a contractId, is rejected exactly like an unknown
+        // conversationId - never silently re-scoped, never allowed to leak
+        // history across contracts.
+        if (found.contractId !== (contractId ?? null)) {
+          throw new NotFoundError();
+        }
         conversation = found;
+
+        if (conversationId) {
+          const priorMessages = await listMessagesForConversation({
+            organizationId: authContext.organizationId,
+            userId: authContext.userId,
+            conversationId: conversation.id,
+          });
+          history = selectRecentConversationHistory(priorMessages);
+        }
 
         await addMessage({
           conversationId: conversation.id,
@@ -127,7 +154,6 @@ export async function POST(request: Request) {
             controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
           };
 
-          let finalCitations: Citation[] = [];
           try {
             for await (const event of askQuestionStreaming({
               organizationId: authContext.organizationId,
@@ -136,12 +162,17 @@ export async function POST(request: Request) {
               userId: authContext.userId,
               conversationId: conversation.id,
               contractId,
+              history,
             })) {
               if (clientDisconnected || request.signal.aborted) {
                 break;
               }
               if (event.type === "citations") {
-                finalCitations = event.citations;
+                // §AI 답변 품질 개편 Phase 1.4 - a progressive UI hint only
+                // (the retrieved/context set, emitted before any text
+                // exists yet) - the client updates this message's citations
+                // again, to the FINAL answer-used set, when "done" arrives
+                // below. Never what gets persisted.
                 enqueueEvent({ type: "citations", citations: event.citations });
               } else if (event.type === "chunk") {
                 enqueueEvent({ type: "chunk", text: event.text });
@@ -157,16 +188,20 @@ export async function POST(request: Request) {
                     organizationId: authContext.organizationId,
                     role: "ASSISTANT",
                     content: event.fullText,
-                    // §Phase 14.1 §9 - persists the FULL real provenance for
-                    // both citation types, never just the clause-shaped
-                    // subset: a ChunkCitation's chunkId/offsets/page are
+                    // §Phase 14.1 §9 / §AI 답변 품질 개편 Phase 1.4 - persists
+                    // the FULL real provenance for the ANSWER-USED citation
+                    // set (event.citations - see ask-question.ts's own
+                    // AskQuestionStreamEvent docstring), never the broader
+                    // retrieved/context set the early "citations" event
+                    // above carried. Never just the clause-shaped subset
+                    // either: a ChunkCitation's chunkId/offsets/page are
                     // real values already computed at retrieval time, not
                     // fabricated here - carrying them through is what lets
                     // a reloaded conversation still distinguish "this
                     // citation came from the raw document, not a
                     // ContractClause" (see ai-conversation-repository.ts's
                     // AddMessageCitationData).
-                    citations: finalCitations.map((citation) => ({
+                    citations: event.citations.map((citation) => ({
                       contractClauseId: citation.contractClauseId,
                       chunkId: citation.evidenceType === "chunk" ? citation.chunkId : null,
                       contractId: citation.contractId,
@@ -193,7 +228,16 @@ export async function POST(request: Request) {
                       canaryUsed: event.canaryUsed,
                     },
                   });
-                  enqueueEvent({ type: "done", conversationId: conversation.id, messageId: saved.id });
+                  // §AI 답변 품질 개편 Phase 1.4 - carries the FINAL,
+                  // answer-used citation set so the client can correct the
+                  // message's displayed citations away from the early,
+                  // broader "citations" event's set (see ai-chat.tsx).
+                  enqueueEvent({
+                    type: "done",
+                    conversationId: conversation.id,
+                    messageId: saved.id,
+                    citations: event.citations,
+                  });
                 }
               }
             }

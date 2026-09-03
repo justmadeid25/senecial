@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ClauseCitation } from "@/domain/ai/citation";
-import { countTokens, packCitationsWithinTokenBudget } from "@/domain/ai/context-token-budget";
+import { countTokens, MAX_CITATIONS_FOCUSED, packCitationsWithinTokenBudget } from "@/domain/ai/context-token-budget";
 
 function buildCitation(overrides: Partial<ClauseCitation> = {}): ClauseCitation {
   return {
@@ -31,15 +31,64 @@ describe("packCitationsWithinTokenBudget (Phase 14.1 §5)", () => {
     expect(result.totalContextTokens).toBeGreaterThan(0);
   });
 
-  it("does not cap at any fixed evidence COUNT - many small citations can all fit if the real token budget allows it", () => {
+  it("token budget alone (not count) is still the only bound for a COMPREHENSIVE question - many small citations can all fit if real token size allows it", () => {
     const citations = Array.from({ length: 30 }, (_, i) =>
       buildCitation({ contractClauseId: `c${i}`, clauseReference: `제${i}조`, evidenceText: `짧은 근거 문장 ${i}.` })
     );
     // 30 tiny citations comfortably fit the real default budget - proves
-    // there is no fixed "8 items max" ceiling anymore.
-    const result = packCitationsWithinTokenBudget("질문", citations);
+    // there is no fixed token-size ceiling for a comprehensive review, only
+    // the count cap below (which only applies to `focused`).
+    const result = packCitationsWithinTokenBudget("질문", citations, undefined, "comprehensive");
     expect(result.kept).toHaveLength(30);
     expect(result.truncated).toBe(false);
+  });
+
+  describe("§AI 답변 품질 개편 Phase 1.1 P0-5 - citation-count cap for focused questions", () => {
+    function manyCitations(count: number) {
+      return Array.from({ length: count }, (_, i) =>
+        buildCitation({ contractClauseId: `c${i}`, clauseReference: `제${i}조`, evidenceText: `짧은 근거 문장 ${i}.`, score: 1 - i * 0.01 })
+      );
+    }
+
+    it("a focused question (the default) never packs more than MAX_CITATIONS_FOCUSED, even with huge token headroom - the exact measured evaluation regression (12-14 citations for a single-fact question)", () => {
+      const result = packCitationsWithinTokenBudget("질문", manyCitations(14));
+      expect(result.kept.length).toBeLessThanOrEqual(MAX_CITATIONS_FOCUSED);
+      expect(result.truncated).toBe(true);
+    });
+
+    it("explicit complexity='focused' behaves identically to the default", () => {
+      const result = packCitationsWithinTokenBudget("질문", manyCitations(14), undefined, "focused");
+      expect(result.kept.length).toBeLessThanOrEqual(MAX_CITATIONS_FOCUSED);
+    });
+
+    it("the count cap keeps the STRONGEST citations (already score-sorted input), not an arbitrary subset", () => {
+      const result = packCitationsWithinTokenBudget("질문", manyCitations(10));
+      expect(result.kept.map((c) => c.contractClauseId)).toEqual(
+        Array.from({ length: MAX_CITATIONS_FOCUSED }, (_, i) => `c${i}`)
+      );
+    });
+
+    it("a focused question with FEWER than the cap is never artificially padded or truncated", () => {
+      const result = packCitationsWithinTokenBudget("질문", manyCitations(3));
+      expect(result.kept).toHaveLength(3);
+      expect(result.truncated).toBe(false);
+    });
+
+    it("real scenario: a termination question's top-2 citations (the termination right + a materially relevant early-termination/penalty qualifier) both survive the cap alongside less-relevant noise", () => {
+      const citations = [
+        buildCitation({ contractClauseId: "art4", clauseReference: "제4조", evidenceText: "중도해지 시 위약금을 지급한다.", score: 0.51 }),
+        buildCitation({ contractClauseId: "art3", clauseReference: "제3조", evidenceText: "계약 위반 시 즉시 해지할 수 있다.", score: 0.44 }),
+        buildCitation({ contractClauseId: "art12", clauseReference: "제12조", evidenceText: "비밀유지 의무가 있다.", score: 0.27 }),
+        buildCitation({ contractClauseId: "art16", clauseReference: "제16조", evidenceText: "불가항력 시 책임을 지지 않는다.", score: 0.26 }),
+        buildCitation({ contractClauseId: "art2", clauseReference: "제2조", evidenceText: "계약기간은 1년이다.", score: 0.25 }),
+        buildCitation({ contractClauseId: "art17", clauseReference: "제17조", evidenceText: "서울중앙지방법원을 관할로 한다.", score: 0.22 }),
+      ];
+      const result = packCitationsWithinTokenBudget("이거 그냥 해지해도 돼?", citations);
+      const kept = result.kept.map((c) => c.contractClauseId);
+      expect(kept).toContain("art4");
+      expect(kept).toContain("art3");
+      expect(kept.length).toBeLessThanOrEqual(MAX_CITATIONS_FOCUSED);
+    });
   });
 
   it("truncates by real token size (not item count) when over an explicit small budget, keeping the highest-scored (first) citations", () => {

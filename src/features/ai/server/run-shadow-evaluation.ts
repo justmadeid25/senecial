@@ -1,5 +1,5 @@
 import type { Citation } from "@/domain/ai/citation";
-import { assertEveryParagraphHasCitation } from "@/domain/ai/citation-required";
+import { assertAnswerGrounded } from "@/domain/ai/citation-required";
 import type { LlmMessage } from "@/domain/ai/llm-provider";
 import { loadAiShadowConfig } from "@/lib/config/ai-shadow";
 import { shouldSampleForShadow } from "@/domain/ai/shadow-sampling";
@@ -49,9 +49,15 @@ async function runShadowComparison(
     const result = await shadowProvider.generateCompletion(params.messages);
     const latencyMs = Math.round(performance.now() - start);
 
+    // §AI 답변 품질 개편 P0-4 - the shadow provider receives the SAME
+    // `messages` the primary answer used (params.messages, built by
+    // buildPromptMessages()), so its own completion follows the same
+    // tagged-block prompt format - the block-aware validator (not the
+    // strict per-paragraph one, which would misreport a valid
+    // 결론/확인사항 block as invalid) is the correct check here.
     let citationValid = true;
     try {
-      assertEveryParagraphHasCitation(result.text, params.contextCitations);
+      assertAnswerGrounded(result.text, params.contextCitations);
     } catch {
       citationValid = false;
     }

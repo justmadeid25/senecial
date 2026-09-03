@@ -33,6 +33,17 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations?: ChatCitation[];
+  /**
+   * §AI 답변 품질 개편 P0-4 - true when an "error" event arrived AFTER this
+   * assistant message already had some content streamed into it (a real
+   * mid-answer failure - e.g. a block failed grounding validation, or the
+   * provider errored after yielding a valid block). The message bubble
+   * itself must show this - a separate error line below the whole chat
+   * (the pre-existing `error` state) is easy to miss and does not mark
+   * WHICH message is actually incomplete, so a user could mistake a
+   * truncated answer for a complete, trustworthy one.
+   */
+  incomplete?: boolean;
 }
 
 /**
@@ -118,10 +129,13 @@ export function AiChat({ scopedContract }: { scopedContract?: { id: string; titl
           const event = JSON.parse(line) as
             | { type: "citations"; citations: ChatCitation[] }
             | { type: "chunk"; text: string }
-            | { type: "done"; conversationId: string; messageId: string }
+            | { type: "done"; conversationId: string; messageId: string; citations: ChatCitation[] }
             | { type: "error"; message: string };
 
           if (event.type === "citations") {
+            // §AI 답변 품질 개편 Phase 1.4 - a progressive preview only (the
+            // broad retrieved/context set, before any answer text exists) -
+            // corrected to the answer-used set below once "done" arrives.
             setMessages((prev) => {
               const next = [...prev];
               next[next.length - 1] = { ...next[next.length - 1]!, citations: event.citations };
@@ -136,8 +150,28 @@ export function AiChat({ scopedContract }: { scopedContract?: { id: string; titl
             });
           } else if (event.type === "done") {
             conversationIdRef.current = event.conversationId;
+            // §AI 답변 품질 개편 Phase 1.4 - replace the early preview with
+            // the FINAL citations the answer text actually references, not
+            // everything that was merely retrieved (see route.ts's own
+            // comment on why these two sets differ).
+            setMessages((prev) => {
+              const next = [...prev];
+              next[next.length - 1] = { ...next[next.length - 1]!, citations: event.citations };
+              return next;
+            });
           } else if (event.type === "error") {
             setError(event.message);
+            // §P0-4 - mark the in-progress assistant message itself as
+            // incomplete if it already has content, so the message bubble
+            // never reads as a normal, complete answer.
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === "assistant" && last.content.length > 0) {
+                next[next.length - 1] = { ...last, incomplete: true };
+              }
+              return next;
+            });
           }
         }
       }
@@ -213,6 +247,19 @@ export function AiChat({ scopedContract }: { scopedContract?: { id: string; titl
                   <span className="ai-thinking-dot size-1.5 rounded-full bg-primary [animation-delay:300ms]" />
                 </div>
               ) : null}
+
+              {/* §AI 답변 품질 개편 P0-4 - rendered INSIDE the message bubble
+                  itself (not just the separate `error` line below the whole
+                  chat) so a user can never mistake a truncated answer for a
+                  complete, trustworthy one. */}
+              {message.incomplete && (
+                <p
+                  data-testid="ai-message-incomplete-warning"
+                  className="flex items-center gap-1 text-xs font-medium text-destructive"
+                >
+                  ⚠️ 답변이 완전히 생성되지 못했습니다. 위 내용은 일부일 수 있으니 참고용으로만 확인하세요.
+                </p>
+              )}
 
               {message.citations && message.citations.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-2.5">

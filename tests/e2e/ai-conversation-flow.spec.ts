@@ -365,3 +365,101 @@ test.describe.serial("AI conversation: not-found handling for bad contractId (§
     expect(response?.status()).toBe(404);
   });
 });
+
+const renewalOwnerEmail = `ai-e2e-renewal-owner-${runId}@e2e-test.local`;
+const renewalContractTitle = `AI 상담 대화 맥락 E2E 계약 ${runId}`;
+const RENEWAL_TEXT =
+  "본 계약은 계약기간 종료 후 자동갱신되며, 종료 30일 전까지 서면으로 통지하지 않으면 동일한 조건으로 갱신된다.";
+let renewalContractUrl = "";
+
+/**
+ * §AI 답변 품질 개편 P0-1 - real-browser proof that a follow-up question
+ * with no legal keywords of its own ("그럼 언제까지 말해야 돼?") is
+ * answered correctly once the bounded prior turn is folded into
+ * retrieval/the prompt (see conversation-context.ts), AND that this still
+ * stays correctly scoped to the SAME contract throughout (contractId
+ * carried via `/ai?contractId=...`, re-verified server-side on every
+ * request - see route.ts's Conversation.contractId check). Own dedicated
+ * fixture, same rationale as the scoping describe block above (module
+ * state does not reliably survive across `test.describe` blocks here).
+ */
+test.describe.serial("AI conversation: multi-turn context follows a contextless follow-up (§AI 답변 품질 개편 P0-1)", () => {
+  test.setTimeout(180_000);
+
+  test("owner sets up a contract with an auto-renewal/notice clause", async ({ page }) => {
+    await signUpAs(page, { name: "AI E2E Renewal Owner", companyName: "AI E2E Renewal Co", email: renewalOwnerEmail });
+    await logInAs(page, renewalOwnerEmail);
+
+    await page.goto("/contracts/new");
+    await page.getByLabel("계약명 *").fill(renewalContractTitle);
+    await page.getByLabel("계약 유형 *").click();
+    await page.getByRole("option", { name: "용역계약" }).click();
+    await page.getByRole("button", { name: "계약 생성" }).click();
+    await page.waitForURL(/\/contracts\/(?!new$)[a-z0-9]{20,}$/);
+    renewalContractUrl = new URL(page.url()).pathname;
+
+    const docxBuffer = await buildContractDocxBuffer([
+      "AI 상담 대화 맥락 E2E 테스트 계약서",
+      "제2조(계약기간)",
+      RENEWAL_TEXT,
+    ]);
+
+    await page.goto(renewalContractUrl);
+    await page.waitForLoadState("networkidle");
+    await page.setInputFiles("#contract-file", {
+      name: "ai-e2e-renewal-source.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      buffer: docxBuffer,
+    });
+    await page.getByRole("button", { name: "업로드" }).click();
+    await expect(page.getByRole("table").getByText("ai-e2e-renewal-source.docx").first()).toBeVisible({
+      timeout: 120_000,
+    });
+
+    runWorker("scripts/process-extraction-jobs.ts");
+
+    await page.goto(renewalContractUrl);
+    await expect(page.getByText("계약 조항 분해")).toBeVisible();
+    await expect(page.getByRole("button", { name: "조항 분해 시작" })).toHaveCount(0);
+    await expect(page.getByText("대기 중")).toBeVisible();
+    runWorker("scripts/process-clause-segmentation-jobs.ts");
+    runWorker("scripts/process-embedding-jobs.ts");
+  });
+
+  test("a contextless follow-up question is answered correctly using the immediately preceding turn, still scoped to the same contract", async ({
+    page,
+  }) => {
+    const contractId = renewalContractUrl.split("/").pop()!;
+    expect(contractId.length).toBeGreaterThan(0);
+
+    await logInAs(page, renewalOwnerEmail);
+    const response = await page.goto(`/ai?contractId=${contractId}`);
+    expect(response?.status()).toBe(200);
+    await expect(page.getByTestId("ai-scoped-contract-banner")).toContainText(renewalContractTitle);
+
+    // Question 1 - establishes the auto-renewal context.
+    await page.getByPlaceholder("예: 이 계약의 해지 조건은 무엇인가요?").fill("이 계약 자동갱신돼?");
+    await page.getByRole("button", { name: "질문하기" }).click();
+    const firstAnswer = page.getByTestId("ai-message-assistant").last();
+    await expect(firstAnswer).toContainText("갱신", { timeout: 15_000 });
+    await expect(firstAnswer).toContainText("근거", { timeout: 15_000 });
+
+    // Question 2 - a genuinely contextless follow-up: no "자동갱신"/"통지"/
+    // "갱신" keyword of its own. Before P0-1, this had no way to resolve
+    // "그럼" and would very likely fall through to the hallucination-guard
+    // fallback ("근거를 충분히 찾지 못했습니다") despite the answer being
+    // right there in the clause the FIRST question already surfaced.
+    await page.getByPlaceholder("예: 이 계약의 해지 조건은 무엇인가요?").fill("그럼 언제까지 말해야 돼?");
+    await page.getByRole("button", { name: "질문하기" }).click();
+    const secondAnswer = page.getByTestId("ai-message-assistant").last();
+    // Must NOT be the hallucination-guard fallback - the whole point of
+    // this test is that history rescues an otherwise-unanswerable question.
+    await expect(secondAnswer).not.toContainText("근거를 충분히 찾지 못했습니다", { timeout: 15_000 });
+    await expect(secondAnswer).toContainText("30일", { timeout: 15_000 });
+    await expect(secondAnswer).toContainText("근거", { timeout: 15_000 });
+    // Still correctly scoped to the SAME contract throughout the
+    // multi-turn exchange - no contract-scope leakage across turns.
+    await expect(secondAnswer).toContainText(renewalContractTitle, { timeout: 15_000 });
+    await expect(page.getByTestId("ai-scoped-contract-banner")).toContainText(renewalContractTitle);
+  });
+});

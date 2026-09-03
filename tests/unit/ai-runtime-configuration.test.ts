@@ -21,7 +21,7 @@ function baseConfig(overrides: Partial<AiRuntimeConfiguration> = {}): AiRuntimeC
     rerankerVersion: "exact-phrase-bonus-v1",
     retrievalTopK: 10,
     contextMaxTokens: 128_000,
-    contextBudgetVersion: "token-budget-v1",
+    contextBudgetVersion: "token-budget-v2",
     hallucinationGuardVersion: "v1",
     hallucinationThreshold: 0.15,
     refusalThreshold: 1,

@@ -48,8 +48,22 @@ const QUEUE_TEST_FILES = [
   "tests/integration/ai-cache.test.ts",
   "tests/integration/vector-backfill.test.ts",
   "tests/integration/clause-vector-search-providers.test.ts",
+  // §AI 답변 품질 개편 P0-1 - same globally-oldest-PENDING-row claim shape
+  // via processNextExtractionJob()/processNextClauseSegmentationJob()/
+  // processNextEmbeddingJob() during its two-contract fixture setup.
+  "tests/integration/ai-conversation-history-context.test.ts",
   "tests/integration/vector-search-accuracy-comparison.test.ts",
   "tests/integration/vector-search-revision-and-staleness.test.ts",
+  // §AI 답변 품질 개편 Phase 1.2 P0-3 - same globally-oldest-PENDING-row
+  // claim shape via processNextExtractionJob()/processNextClauseSegmentationJob()/
+  // processNextEmbeddingJob()/processNextChunkEmbeddingJob() during its
+  // two-contract fixture setup.
+  "tests/integration/ai-comprehensive-review-family-sampling.test.ts",
+  // §AI 답변 품질 개편 Phase 1.4 - same globally-oldest-PENDING-row claim
+  // shape via processNextExtractionJob()/processNextClauseSegmentationJob()/
+  // processNextEmbeddingJob()/processNextChunkEmbeddingJob() during its
+  // fixture setup.
+  "tests/integration/ai-citation-precision.test.ts",
 ];
 
 /**

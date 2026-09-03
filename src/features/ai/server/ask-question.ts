@@ -1,11 +1,19 @@
 import { AI_CACHE_TTL_SECONDS } from "@/lib/config/ai-cache";
 import { AiBudgetExceededError } from "@/domain/ai/ai-budget-error";
 import { AI_USAGE_OPERATION_TYPES } from "@/domain/ai/ai-usage-operation";
+import { filterCitationsToAnswerUsed } from "@/domain/ai/answer-used-citations";
+import { selectBroadIssueCandidates } from "@/domain/ai/broad-issue-selection";
 import { hashCacheInput } from "@/domain/ai/cache-key";
 import type { Citation } from "@/domain/ai/citation";
-import { assertEveryParagraphHasCitation, CITATION_VALIDATOR_VERSION } from "@/domain/ai/citation-required";
+import {
+  assertAnswerBlockGrounded,
+  assertAnswerGrounded,
+  CITATION_VALIDATOR_VERSION,
+  parseAnswerBlock,
+} from "@/domain/ai/citation-required";
 import { assertQuestionWithinBudget } from "@/domain/ai/context-budget";
 import { packCitationsWithinTokenBudget } from "@/domain/ai/context-token-budget";
+import type { ConversationTurn } from "@/domain/ai/conversation-context";
 import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
 import { checkEvidenceSufficiency, UNKNOWN_ANSWER_TEXT } from "@/domain/ai/hallucination-guard";
 import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
@@ -13,7 +21,7 @@ import type { LlmMessage, LlmProvider } from "@/domain/ai/llm-provider";
 import { estimateAiCostMinor } from "@/domain/ai/pricing";
 import { buildPromptMessages, PROMPT_TEMPLATE_VERSION } from "@/domain/ai/prompt-builder";
 import { normalizeProviderError } from "@/domain/ai/provider-error";
-import { classifyQuestionComplexity } from "@/domain/ai/question-complexity";
+import { classifyQuestionComplexity, type QuestionComplexity } from "@/domain/ai/question-complexity";
 import { getCacheProvider, getCacheStampedeLock } from "@/server/services/ai/cache/get-cache-provider";
 import { withDistributedLockOrCompute } from "@/server/services/ai/cache/distributed-lock";
 import { withInFlightDeduplication } from "@/server/services/ai/cache/in-flight-deduplication";
@@ -80,8 +88,8 @@ async function reserveLlmBudget(params: {
  * that's `totalContextTokens`, recorded separately) when truncation
  * actually happens.
  */
-function applyContextBudget(question: string, citations: Citation[]): Citation[] {
-  const { kept, truncated, totalContextTokens } = packCitationsWithinTokenBudget(question, citations);
+function applyContextBudget(question: string, citations: Citation[], complexity: QuestionComplexity): Citation[] {
+  const { kept, truncated, totalContextTokens } = packCitationsWithinTokenBudget(question, citations, undefined, complexity);
   if (truncated) {
     recordContextTruncation();
   }
@@ -193,6 +201,8 @@ export async function askQuestion(params: {
   userId?: string;
   /** §AI 상담 개편 - when set, restricts retrieval to this one contract; the caller must have already verified it belongs to organizationId (see src/app/api/ai/ask/route.ts). */
   contractId?: string;
+  /** §AI 답변 품질 개편 P0-1 - bounded, already-authorized recent turns (see conversation-context.ts). Never trusted from the client - the caller must have loaded this via listMessagesForConversation()'s own org/user/contract scoping. Defaults to none (the evaluation CLI and most callers have no conversation). */
+  history?: readonly ConversationTurn[];
 }): Promise<AskQuestionResult> {
   assertQuestionWithinBudget(params.question);
   recordAiRequestStart();
@@ -210,20 +220,23 @@ export async function askQuestion(params: {
     const llmSelection = getLlmProviderForOrganization({ organizationId: params.organizationId, ...aiContext });
     const llm = llmSelection.provider;
 
+    const history = params.history ?? [];
     const citations = await retrieveContext({
       organizationId: params.organizationId,
       question: params.question,
       embeddingProvider: embeddingSelection.provider,
       contractId: params.contractId,
+      history,
     });
-    const guard = checkEvidenceSufficiency(citations, classifyQuestionComplexity(params.question));
+    const complexity = classifyQuestionComplexity(params.question);
+    const guard = checkEvidenceSufficiency(citations, complexity);
 
     if (!guard.sufficient) {
       await recordAiSearchPatterns({ organizationId: params.organizationId, question: params.question, citedClauseIds: [] });
       return { answerText: UNKNOWN_ANSWER_TEXT, citations: [], sufficient: false };
     }
 
-    const contextCitations = applyContextBudget(params.question, guard.strongCitations);
+    const contextCitations = applyContextBudget(params.question, guard.strongCitations, complexity);
 
     await recordAiSearchPatterns({
       organizationId: params.organizationId,
@@ -231,7 +244,26 @@ export async function askQuestion(params: {
       citedClauseIds: contextCitations.map((citation) => citation.contractClauseId).filter((id) => id !== null),
     });
 
-    const messages = buildPromptMessages(params.question, contextCitations);
+    // §AI 답변 품질 개편 Phase 1.4.3 - see broad-issue-selection.ts's own
+    // docstring. `contextCitations` above stays the FULL budgeted set
+    // (still used for search-pattern recording and shadow evaluation -
+    // "retrieval remains broad internally"); `synthesisCitations` is what
+    // actually reaches the prompt/grounding/filtering below, structurally
+    // bounded for a comprehensive question (a no-op for "focused", and a
+    // no-op for an explicit exhaustive-review request even when
+    // "comprehensive" - see selectBroadIssueCandidates()).
+    const broadSelection =
+      complexity === "comprehensive"
+        ? selectBroadIssueCandidates({ question: params.question, citations: contextCitations })
+        : null;
+    const synthesisCitations = broadSelection ? broadSelection.selectedCitations : contextCitations;
+    // §AI 답변 품질 개편 Phase 1.4.4 - the explicit per-issue skeleton
+    // (see prompt-builder.ts's buildIssueSkeletonSection()) only applies
+    // to a genuinely BOUNDED selection - an exhaustive-review request
+    // already returns every group unchanged and gets no fixed-N template.
+    const issueGroups = broadSelection && !broadSelection.exhaustive ? broadSelection.selectedGroups : undefined;
+
+    const messages = buildPromptMessages(params.question, synthesisCitations, history, complexity, issueGroups);
     const cache = getCacheProvider();
     const cacheKey = buildPromptCacheKey(params.organizationId, llm, messages);
 
@@ -313,23 +345,46 @@ export async function askQuestion(params: {
       });
     }
 
-    // §Citation Required - throws (never silently returned) if any paragraph
-    // lacks a valid citation marker; the caller must treat this as a hard
-    // failure, not degrade to showing an uncited answer. Re-checked even on
-    // a cache hit (cheap, pure) as a defense-in-depth invariant.
-    assertEveryParagraphHasCitation(answerText, contextCitations);
+    // §Citation Required / §AI 답변 품질 개편 P0-4 - throws (never silently
+    // returned) if any EVIDENCE block (or an untagged paragraph, the
+    // fail-safe default) lacks a valid citation marker, or if any block of
+    // any type contains a fabricated one; the caller must treat this as a
+    // hard failure, not degrade to showing an uncited/hallucinated answer.
+    // Re-checked even on a cache hit (cheap, pure) as a defense-in-depth
+    // invariant. Returns the tag-stripped, user-facing text - the cached
+    // value itself stays the raw tagged completion (see buildPromptCacheKey's
+    // cache.set() above), so a cache hit is re-validated/re-stripped exactly
+    // like a fresh completion, never storing two divergent representations.
+    // §AI 답변 품질 개편 Phase 1.4.3 - validated against `synthesisCitations`
+    // (what the model was ACTUALLY shown), never the broader
+    // `contextCitations` - a marker resolving to something outside what
+    // this prompt supplied must fail exactly like any other hallucination,
+    // even if that something was real, retrieved evidence the model just
+    // never saw in THIS call.
+    const groundedAnswerText = assertAnswerGrounded(answerText, synthesisCitations);
 
-    return { answerText, citations: contextCitations, sufficient: true };
+    // §AI 답변 품질 개편 Phase 1.4 - `result.citations` is the ANSWER-USED
+    // subset (what the text actually references), never the full
+    // `contextCitations` the LLM merely had available - see
+    // answer-used-citations.ts's own docstring for the measured problem
+    // this fixes (Phase 1.3's real-OpenAI eval).
+    const usedCitations = filterCitationsToAnswerUsed(groundedAnswerText, synthesisCitations);
+
+    return { answerText: groundedAnswerText, citations: usedCitations, sufficient: true };
   } finally {
     recordAiRequestEnd();
   }
 }
 
 export type AskQuestionStreamEvent =
+  /** §AI 답변 품질 개편 Phase 1.4 - emitted EARLY (before any generation), so this is always the full RETRIEVED/context set, never the answer-used one - the answer doesn't exist yet at this point in the stream. A progressive UI hint only; the "done" event's own `citations` field below is the one that should drive the FINAL rendered/persisted citation list. */
   | { type: "citations"; citations: Citation[] }
   | { type: "chunk"; text: string }
-  /** §Phase 13.1 Part 11 - `canaryUsed` is omitted (not false) when no completion was actually generated (the hallucination guard short-circuited before any provider call) - undefined means "not applicable," never "definitely primary." */
-  | { type: "done"; fullText: string; canaryUsed?: boolean };
+  /**
+   * §Phase 13.1 Part 11 - `canaryUsed` is omitted (not false) when no completion was actually generated (the hallucination guard short-circuited before any provider call) - undefined means "not applicable," never "definitely primary."
+   * §AI 답변 품질 개편 Phase 1.4 - `citations` here is the ANSWER-USED subset (see answer-used-citations.ts), computed once the full grounded text is known - this, not the early "citations" event above, is what a caller should persist/render as this answer's final evidence.
+   */
+  | { type: "done"; fullText: string; citations: Citation[]; canaryUsed?: boolean };
 
 /**
  * §Streaming + §Citation Required, together - never in tension: this
@@ -357,6 +412,8 @@ export async function* askQuestionStreaming(params: {
   conversationId?: string;
   /** §AI 상담 개편 - when set, restricts retrieval to this one contract; the caller must have already verified it belongs to organizationId (see src/app/api/ai/ask/route.ts). */
   contractId?: string;
+  /** §AI 답변 품질 개편 P0-1 - bounded, already-authorized recent turns (see conversation-context.ts). Never trusted from the client - the caller (src/app/api/ai/ask/route.ts) must have loaded this via listMessagesForConversation()'s own org/user/contract scoping. */
+  history?: readonly ConversationTurn[];
 }): AsyncGenerator<AskQuestionStreamEvent> {
   assertQuestionWithinBudget(params.question);
   recordAiRequestStart();
@@ -372,23 +429,26 @@ export async function* askQuestionStreaming(params: {
     const llmSelection = getLlmProviderForOrganization({ organizationId: params.organizationId, ...aiContext });
     const llm = llmSelection.provider;
 
+    const history = params.history ?? [];
     const citations = await retrieveContext({
       organizationId: params.organizationId,
       question: params.question,
       embeddingProvider: embeddingSelection.provider,
       contractId: params.contractId,
+      history,
     });
-    const guard = checkEvidenceSufficiency(citations, classifyQuestionComplexity(params.question));
+    const complexity = classifyQuestionComplexity(params.question);
+    const guard = checkEvidenceSufficiency(citations, complexity);
 
     if (!guard.sufficient) {
       await recordAiSearchPatterns({ organizationId: params.organizationId, question: params.question, citedClauseIds: [] });
       yield { type: "citations", citations: [] };
       yield { type: "chunk", text: UNKNOWN_ANSWER_TEXT };
-      yield { type: "done", fullText: UNKNOWN_ANSWER_TEXT };
+      yield { type: "done", fullText: UNKNOWN_ANSWER_TEXT, citations: [] };
       return;
     }
 
-    const contextCitations = applyContextBudget(params.question, guard.strongCitations);
+    const contextCitations = applyContextBudget(params.question, guard.strongCitations, complexity);
 
     await recordAiSearchPatterns({
       organizationId: params.organizationId,
@@ -396,23 +456,46 @@ export async function* askQuestionStreaming(params: {
       citedClauseIds: contextCitations.map((citation) => citation.contractClauseId).filter((id) => id !== null),
     });
 
+    // §AI 답변 품질 개편 Phase 1.4.3 - the early "citations" event below
+    // deliberately still shows the FULL `contextCitations` (a progressive
+    // "what was retrieved" preview - see AskQuestionStreamEvent's own
+    // docstring), never the narrower synthesis set - see askQuestion()'s
+    // identical comment for the full rationale.
     yield { type: "citations", citations: contextCitations };
 
-    const messages = buildPromptMessages(params.question, contextCitations);
+    const broadSelection =
+      complexity === "comprehensive"
+        ? selectBroadIssueCandidates({ question: params.question, citations: contextCitations })
+        : null;
+    const synthesisCitations = broadSelection ? broadSelection.selectedCitations : contextCitations;
+    // §AI 답변 품질 개편 Phase 1.4.4 - see askQuestion()'s identical comment.
+    const issueGroups = broadSelection && !broadSelection.exhaustive ? broadSelection.selectedGroups : undefined;
+
+    const messages = buildPromptMessages(params.question, synthesisCitations, history, complexity, issueGroups);
     const cache = getCacheProvider();
     const cacheKey = buildPromptCacheKey(params.organizationId, llm, messages);
 
+    // §AI 답변 품질 개편 P0-4 - a cache hit stores the RAW (tag-included)
+    // completion (see cache.set() below), so it is re-validated/re-stripped
+    // here via assertAnswerGrounded() exactly like a fresh completion -
+    // never two divergent representations of "what a cache hit looks like"
+    // depending on whether the tags were already stripped before caching.
     const cached = await cache.get(cacheKey);
     if (cached !== undefined) {
       recordCacheEvent("prompt", true);
-      assertEveryParagraphHasCitation(cached, contextCitations);
-      yield { type: "chunk", text: cached };
+      const groundedCached = assertAnswerGrounded(cached, synthesisCitations);
+      yield { type: "chunk", text: groundedCached };
       // §Phase 13.1 Part 11 - the cache key already embeds llm.providerName/
       // modelName (buildPromptCacheKey), so a hit under the CURRENT
       // selection's key can only ever have been written by that identical
       // provider identity - canaryUsed reflects the currently-resolved
       // group, which is guaranteed consistent with whichever call wrote it.
-      yield { type: "done", fullText: cached, canaryUsed: llmSelection.group === "canary" };
+      yield {
+        type: "done",
+        fullText: groundedCached,
+        citations: filterCitationsToAnswerUsed(groundedCached, synthesisCitations),
+        canaryUsed: llmSelection.group === "canary",
+      };
       return;
     }
 
@@ -422,9 +505,14 @@ export async function* askQuestionStreaming(params: {
     const joined = await waitForActiveStreamResult(cache, cacheKey);
     if (joined !== undefined) {
       recordCacheEvent("prompt", true);
-      assertEveryParagraphHasCitation(joined, contextCitations);
-      yield { type: "chunk", text: joined };
-      yield { type: "done", fullText: joined, canaryUsed: llmSelection.group === "canary" };
+      const groundedJoined = assertAnswerGrounded(joined, synthesisCitations);
+      yield { type: "chunk", text: groundedJoined };
+      yield {
+        type: "done",
+        fullText: groundedJoined,
+        citations: filterCitationsToAnswerUsed(groundedJoined, synthesisCitations),
+        canaryUsed: llmSelection.group === "canary",
+      };
       return;
     }
 
@@ -452,7 +540,14 @@ export async function* askQuestionStreaming(params: {
     activeStreamingKeys.add(cacheKey);
 
     let paragraphBuffer = "";
+    // §AI 답변 품질 개편 P0-4 - `fullText` accumulates the RAW (tag-included)
+    // stream, exactly as before, and is what gets cached (cache.set() below)
+    // so a future cache hit re-validates/re-strips consistently (see the
+    // cache-hit branches above). `groundedFullText` accumulates only the
+    // tag-stripped text already yielded to the client - what actually gets
+    // persisted as the Message's content and reported in the "done" event.
     let fullText = "";
+    let groundedFullText = "";
     const llmStart = performance.now();
     let reportedUsage: { inputTokens: number; outputTokens: number } | undefined;
     let servedByProviderName: string | undefined;
@@ -467,11 +562,21 @@ export async function* askQuestionStreaming(params: {
 
             let boundary = paragraphBuffer.indexOf("\n\n");
             while (boundary !== -1) {
-              const paragraph = paragraphBuffer.slice(0, boundary).trim();
+              const rawParagraph = paragraphBuffer.slice(0, boundary).trim();
               paragraphBuffer = paragraphBuffer.slice(boundary + 2);
-              if (paragraph.length > 0) {
-                assertEveryParagraphHasCitation(paragraph, contextCitations);
-                yield { type: "chunk", text: `${paragraph}\n\n` };
+              if (rawParagraph.length > 0) {
+                // §AI 답변 품질 개편 P0-4 - block-aware validation: a
+                // [결론]/[확인사항]-tagged paragraph is allowed through
+                // without a citation marker; an [근거]-tagged or untagged
+                // paragraph still requires one, exactly as strictly as
+                // before. ANY block containing a marker that does not
+                // resolve to a real supplied citation is rejected
+                // regardless of type. Only the tag-stripped text is ever
+                // yielded to the client.
+                const block = parseAnswerBlock(rawParagraph);
+                assertAnswerBlockGrounded(block, synthesisCitations);
+                groundedFullText += (groundedFullText.length > 0 ? "\n\n" : "") + block.text;
+                yield { type: "chunk", text: `${block.text}\n\n` };
               }
               boundary = paragraphBuffer.indexOf("\n\n");
             }
@@ -483,10 +588,12 @@ export async function* askQuestionStreaming(params: {
           }
         }
 
-        const trailing = paragraphBuffer.trim();
-        if (trailing.length > 0) {
-          assertEveryParagraphHasCitation(trailing, contextCitations);
-          yield { type: "chunk", text: trailing };
+        const trailingRaw = paragraphBuffer.trim();
+        if (trailingRaw.length > 0) {
+          const trailingBlock = parseAnswerBlock(trailingRaw);
+          assertAnswerBlockGrounded(trailingBlock, synthesisCitations);
+          groundedFullText += (groundedFullText.length > 0 ? "\n\n" : "") + trailingBlock.text;
+          yield { type: "chunk", text: trailingBlock.text };
         }
       } finally {
         activeStreamingKeys.delete(cacheKey);
@@ -560,9 +667,17 @@ export async function* askQuestionStreaming(params: {
     // latency to the response the user is actually waiting on. See
     // maybeDispatchShadowEvaluation()'s own docstring for why every
     // failure mode inside it is swallowed rather than propagated here.
-    maybeDispatchShadowEvaluation({ organizationId: params.organizationId, messages, contextCitations });
+    // §AI 답변 품질 개편 Phase 1.4.3 - `synthesisCitations`, matching
+    // `messages` itself (built from the same set) - a shadow provider
+    // response is validated against exactly what it was actually shown.
+    maybeDispatchShadowEvaluation({ organizationId: params.organizationId, messages, contextCitations: synthesisCitations });
 
-    yield { type: "done", fullText, canaryUsed: llmSelection.group === "canary" };
+    yield {
+      type: "done",
+      fullText: groundedFullText,
+      citations: filterCitationsToAnswerUsed(groundedFullText, synthesisCitations),
+      canaryUsed: llmSelection.group === "canary",
+    };
   } finally {
     recordAiRequestEnd();
   }

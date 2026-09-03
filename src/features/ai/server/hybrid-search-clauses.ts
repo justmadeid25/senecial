@@ -1,8 +1,14 @@
 import { AI_CACHE_TTL_SECONDS } from "@/lib/config/ai-cache";
 import { hashCacheInput } from "@/domain/ai/cache-key";
+import {
+  buildHistoryAugmentedSearchQuery,
+  buildHistoryFingerprint,
+  type ConversationTurn,
+} from "@/domain/ai/conversation-context";
 import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
 import { mergeScores, rerank } from "@/domain/ai/hybrid-search-scoring";
 import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
+import { expandLegalConcepts } from "@/domain/ai/legal-concept-expansion";
 import { DEFAULT_TOP_K } from "@/domain/ai/retrieval-config";
 import { buildRetrievalCacheKey } from "@/domain/ai/retrieval-cache-key";
 import { extractKeywords } from "@/domain/ai/keyword-extraction";
@@ -102,16 +108,40 @@ async function getCachedQueryEmbedding(
   });
 }
 
+/** Deduplicates while preserving first-seen order - used to merge literal question tokens with concept-expansion terms without ever double-counting a term already present (which would otherwise silently inflate keywordScore's denominator - see hybrid-search-scoring.ts). */
+function dedupeKeywords(keywords: readonly string[]): string[] {
+  return [...new Set(keywords)];
+}
+
 async function hybridSearchClausesUncached(params: {
   organizationId: string;
   question: string;
   topK: number;
   embeddingProvider: EmbeddingProvider;
   contractId?: string;
+  /** §AI 답변 품질 개편 P0-1 - bounded, already-authorized recent turns (see conversation-context.ts). Never trusted from the client - the caller must have loaded this via listMessagesForConversation()'s own org/user/contract scoping. */
+  history?: readonly ConversationTurn[];
 }): Promise<HybridSearchResultItem[]> {
-  const { organizationId, question, topK, embeddingProvider, contractId } = params;
+  const { organizationId, question, topK, embeddingProvider, contractId, history = [] } = params;
+  // §Exact-phrase bonus - deliberately stays tied to the LITERAL original
+  // question, never the history-augmented search query or a
+  // concept-expansion term (see legal-concept-expansion.ts's own docstring
+  // on why): this bonus represents a phrase actually present in the
+  // user's own words, not something folded in on their behalf.
   const normalizedQuestion = normalizeClauseText(question);
-  const keywords = extractKeywords(question);
+
+  // §P0-1 - folds the single most recent turn's real content into the
+  // search text (both legs) so a contextless follow-up ("그럼 언제까지
+  // 말해야 돼?") has something concrete to match against.
+  const searchQuery = buildHistoryAugmentedSearchQuery(question, history);
+  const normalizedSearchQuery = normalizeClauseText(searchQuery);
+
+  // §P0-2 - concept-expansion terms are ADDITIONAL keyword-leg-only search
+  // terms derived from the ORIGINAL question (never the history-augmented
+  // text, to keep this concern independently testable/predictable) - never
+  // fed into the embedding text (see legal-concept-expansion.ts).
+  const expansionTerms = expandLegalConcepts(question);
+  const keywords = dedupeKeywords([...extractKeywords(searchQuery), ...expansionTerms]);
 
   const retrievalStart = performance.now();
 
@@ -128,7 +158,7 @@ async function hybridSearchClausesUncached(params: {
   // pgvector provider by default (application cosine as the explicit
   // fallback - see search-clause-vectors.ts's fallback policy), instead of
   // loading every organization embedding into this process.
-  const queryEmbedding = await getCachedQueryEmbedding(normalizedQuestion, embeddingProvider);
+  const queryEmbedding = await getCachedQueryEmbedding(normalizedSearchQuery, embeddingProvider);
   const vectorCandidates = await searchClauseVectors({
     organizationId,
     queryVector: queryEmbedding.vector,
@@ -240,8 +270,11 @@ export async function hybridSearchClauses(params: {
   embeddingProvider?: EmbeddingProvider;
   /** §AI 상담 개편 - when set, restricts retrieval to this one contract (still nested inside organizationId - never a substitute for it). */
   contractId?: string;
+  /** §AI 답변 품질 개편 P0-1 - bounded, already-authorized recent turns. See conversation-context.ts. */
+  history?: readonly ConversationTurn[];
 }): Promise<HybridSearchResultItem[]> {
   const topK = params.topK ?? DEFAULT_TOP_K;
+  const history = params.history ?? [];
   const cache = getCacheProvider();
   const embeddingProvider = params.embeddingProvider ?? getEmbeddingProvider();
   const vectorSearchProvider = getClauseVectorSearchProvider();
@@ -254,6 +287,7 @@ export async function hybridSearchClauses(params: {
     question: params.question,
     topK,
     contractId: params.contractId,
+    historyFingerprint: buildHistoryFingerprint(history),
   });
 
   const currentChecksum = await getLatestEmbeddingGenerationChecksum(params.organizationId);
@@ -287,6 +321,7 @@ export async function hybridSearchClauses(params: {
       topK,
       embeddingProvider,
       contractId: params.contractId,
+      history,
     });
 
     const toCache: CachedRetrieval = { embeddingChecksum: currentChecksum, results };

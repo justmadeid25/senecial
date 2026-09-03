@@ -1382,6 +1382,22 @@ model Conversation {
   organizationId String
   userId         String
   title          String?
+  /**
+   * §AI 답변 품질 개편 P0-1 - null for an org-wide conversation (the
+   * default `/ai` entry point), set to the contract's id for a
+   * conversation started from `/ai?contractId=...`. Set ONCE, at creation
+   * (see src/app/api/ai/ask/route.ts), and re-verified on every subsequent
+   * request against that same conversationId - never updated afterward.
+   * No FK relation, same "permanent historical record, no cascade
+   * surprises" rationale as MessageCitation.contractId above: this exists
+   * purely so a reused conversationId can be checked against the request's
+   * OWN contractId server-side, never trusting client-supplied scope
+   * metadata to determine what conversation history is safe to feed back
+   * into retrieval/the prompt (§Tenant Isolation "contract-scoped
+   * conversations must never allow history to escape the active contract
+   * scope").
+   */
+  contractId     String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

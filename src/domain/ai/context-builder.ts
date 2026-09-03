@@ -1,5 +1,5 @@
 import type { ChunkCitation, ClauseCitation } from "./citation";
-import { extractEvidenceSentence } from "./evidence-sentence";
+import { extractChunkEvidence, extractEvidenceSentence } from "./evidence-sentence";
 import { normalizeClauseText } from "@/domain/clauses/normalize-clause-text";
 
 export interface SearchResultLike {
@@ -45,21 +45,36 @@ export interface ChunkSearchResultLike {
 /**
  * §Phase 14.1 §4/§10 - one raw-document chunk hybrid-search result -> one
  * fully-populated ChunkCitation. `clauseReference` mirrors buildContext()'s
- * "never empty" contract via headingContext (the chunk's nearest
- * preceding article/heading) when available, otherwise a positional
- * fallback distinguishable from a real clause number - a reader (or the
- * citation-required marker matcher, which only compares text) must never
- * confuse "본문 발췌 3" with an actual 제N조 reference.
+ * "never empty" contract, otherwise a positional fallback distinguishable
+ * from a real clause number - a reader (or the citation-required marker
+ * matcher, which only compares text) must never confuse "본문 발췌 3" with
+ * an actual 제N조 reference.
+ *
+ * §AI 답변 품질 개편 P0-3 (citation correctness fix) - `clauseReference`
+ * and `evidenceText` are now derived TOGETHER by extractChunkEvidence(),
+ * not independently: a chunk's stored `headingContext` (fixed at ingestion
+ * time to the chunk's LAST article - see document-chunker.ts) is only a
+ * FALLBACK here, used when no heading precedes the actually-selected
+ * evidence sentence within this chunk. When a chunk spans multiple short
+ * articles and the query's best-matching sentence comes from an EARLIER
+ * article than the chunk's tail, the citation now correctly labels that
+ * earlier article instead of silently mislabeling it with the chunk's
+ * last heading (previously: `result.headingContext` and
+ * `extractEvidenceSentence(result.text, question)` were computed
+ * completely independently, so the displayed heading and the quoted
+ * sentence could - and did - come from two different articles).
  */
 export function buildChunkContext(result: ChunkSearchResultLike, question: string): ChunkCitation {
+  const fallbackHeading = result.headingContext ?? `본문 발췌 ${result.chunkIndex + 1}`;
+  const { evidenceText, headingContext } = extractChunkEvidence(result.text, question, fallbackHeading);
   return {
     evidenceType: "chunk",
     contractClauseId: null,
     chunkId: result.chunkId,
     contractId: result.contractId,
     contractTitle: result.contractTitle,
-    clauseReference: result.headingContext ?? `본문 발췌 ${result.chunkIndex + 1}`,
-    evidenceText: extractEvidenceSentence(result.text, question),
+    clauseReference: headingContext ?? fallbackHeading,
+    evidenceText,
     score: result.score,
     sourcePageStart: result.sourcePageStart,
     sourcePageEnd: result.sourcePageEnd,

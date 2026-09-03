@@ -4,6 +4,7 @@ import { AI_LLM_DEFAULT_MAX_OUTPUT_TOKENS_ESTIMATE } from "@/lib/config/ai-budge
 
 import type { Citation } from "./citation";
 import { buildPromptMessages } from "./prompt-builder";
+import type { QuestionComplexity } from "./question-complexity";
 import { normalizeClauseText } from "../clauses/normalize-clause-text";
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -47,7 +48,7 @@ export const CONTEXT_TOKEN_SAFETY_MARGIN = 500;
  * a future change to the packing algorithm itself is versioned the same
  * way a reranker or scoring-weight change already is.
  */
-export const CONTEXT_BUDGET_VERSION = "token-budget-v1";
+export const CONTEXT_BUDGET_VERSION = "token-budget-v2";
 
 /** Real token count via the same tokenizer document-chunker.ts uses for chunk sizing - never a chars/4 approximation. */
 export function countTokens(text: string): number {
@@ -85,6 +86,27 @@ function deduplicateCitationsByEvidenceText(citations: readonly Citation[]): Cit
   return deduped;
 }
 
+/**
+ * §AI 답변 품질 개편 Phase 1.1 P0-5 - the real-world evaluation measured
+ * 12-14 citations packed for single-fact `focused` questions (e.g. "이거
+ * 그냥 해지해도 돼?") purely because the token budget (128k tokens) is
+ * nowhere near a binding constraint for a handful of short Korean clauses
+ * - every citation clearing MIN_CITATION_SCORE got packed in regardless of
+ * how many there were. This is an ADDITIONAL bound, never a replacement
+ * for the token budget below: a `focused` question still cannot exceed
+ * this count even with huge headroom left in the token budget, but the
+ * token budget can still cut it shorter than this if evidence text is
+ * unusually long. `citations` is always already score-sorted descending
+ * (retrieveContext.ts's own contract), so keeping the first N keeps the N
+ * STRONGEST citations, not an arbitrary subset - in practice this also
+ * tends to retain a genuinely-related qualifying citation (e.g. a
+ * termination question's early-termination-penalty clause) alongside the
+ * top one, since related content tends to also score well on the same
+ * keyword/vector signals, without any special-cased "is this a qualifier"
+ * logic (explicitly out of scope - no semantic/LLM dedup).
+ */
+export const MAX_CITATIONS_FOCUSED = 5;
+
 export interface ContextTokenBudgetResult {
   kept: Citation[];
   truncated: boolean;
@@ -119,15 +141,23 @@ export function packCitationsWithinTokenBudget(
   question: string,
   citations: readonly Citation[],
   /** Test-only override for the available-context-token budget - production callers always omit this and get the real AI_LLM_CONTEXT_WINDOW_TOKENS-derived value, since that constant is fixed at module load from env and can't otherwise be exercised at a small scale in a unit test. */
-  maxContextTokensOverride?: number
+  maxContextTokensOverride?: number,
+  /** §P0-5 - defaults to "focused" (the stricter bound) so any existing caller that hasn't been updated for complexity-awareness (evaluation CLI, older tests) keeps getting the SAFER, more conservative cap rather than silently reverting to unbounded-by-count behavior. */
+  complexity: QuestionComplexity = "focused"
 ): ContextTokenBudgetResult {
   const deduped = deduplicateCitationsByEvidenceText(citations);
+  // §P0-5 - count cap applies ONLY to `focused` questions, and only ever
+  // narrows the candidate set BEFORE the token-budget loop below - the
+  // token budget is still a hard, independent upper bound regardless of
+  // complexity (a `comprehensive` question with an enormous evidence set
+  // can still be truncated by real token size, just never by count alone).
+  const countCapped = complexity === "focused" ? deduped.slice(0, MAX_CITATIONS_FOCUSED) : deduped;
   const budget = maxContextTokensOverride ?? availableContextTokens();
 
   const kept: Citation[] = [];
   let currentTokens = totalPromptTokens(question, kept);
 
-  for (const citation of deduped) {
+  for (const citation of countCapped) {
     const candidateTokens = totalPromptTokens(question, [...kept, citation]);
     if (candidateTokens > budget) {
       continue;

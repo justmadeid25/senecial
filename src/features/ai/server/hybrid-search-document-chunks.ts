@@ -1,6 +1,11 @@
 import { AI_CACHE_TTL_SECONDS } from "@/lib/config/ai-cache";
 import { hashCacheInput } from "@/domain/ai/cache-key";
 import { CITATION_VALIDATOR_VERSION } from "@/domain/ai/citation-required";
+import {
+  buildHistoryAugmentedSearchQuery,
+  buildHistoryFingerprint,
+  type ConversationTurn,
+} from "@/domain/ai/conversation-context";
 import { DOCUMENT_CHUNKER_VERSION } from "@/domain/ai/document-chunker";
 import {
   CHUNK_SEARCH_WEIGHT_VERSION,
@@ -10,6 +15,7 @@ import {
 import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
 import { extractKeywords } from "@/domain/ai/keyword-extraction";
 import { exceedsLatencyBudget } from "@/domain/ai/latency-budget";
+import { expandLegalConcepts } from "@/domain/ai/legal-concept-expansion";
 import { DEFAULT_TOP_K } from "@/domain/ai/retrieval-config";
 import { normalizeClauseText } from "@/domain/clauses/normalize-clause-text";
 import { getLatestChunkEmbeddingGenerationChecksum } from "@/server/repositories/contract-document-chunk-embedding-repository";
@@ -104,16 +110,30 @@ async function getCachedChunkQueryEmbedding(
   });
 }
 
+/** Mirrors hybrid-search-clauses.ts's identical helper - see its docstring. */
+function dedupeKeywords(keywords: readonly string[]): string[] {
+  return [...new Set(keywords)];
+}
+
 async function hybridSearchDocumentChunksUncached(params: {
   organizationId: string;
   question: string;
   topK: number;
   embeddingProvider: EmbeddingProvider;
   contractId?: string;
+  /** §AI 답변 품질 개편 P0-1 - mirrors hybrid-search-clauses.ts's identical parameter. */
+  history?: readonly ConversationTurn[];
 }): Promise<HybridSearchChunkResultItem[]> {
-  const { organizationId, question, topK, embeddingProvider, contractId } = params;
+  const { organizationId, question, topK, embeddingProvider, contractId, history = [] } = params;
+  // §Exact-phrase bonus stays tied to the literal original question - see
+  // hybrid-search-clauses.ts's identical rationale.
   const normalizedQuestion = normalizeClauseText(question);
-  const keywords = extractKeywords(question);
+
+  const searchQuery = buildHistoryAugmentedSearchQuery(question, history);
+  const normalizedSearchQuery = normalizeClauseText(searchQuery);
+
+  const expansionTerms = expandLegalConcepts(question);
+  const keywords = dedupeKeywords([...extractKeywords(searchQuery), ...expansionTerms]);
 
   const retrievalStart = performance.now();
 
@@ -125,7 +145,7 @@ async function hybridSearchDocumentChunksUncached(params: {
     recordLatencyBudgetExceeded("keywordSearch");
   }
 
-  const queryEmbedding = await getCachedChunkQueryEmbedding(normalizedQuestion, embeddingProvider);
+  const queryEmbedding = await getCachedChunkQueryEmbedding(normalizedSearchQuery, embeddingProvider);
   const vectorCandidates = await searchDocumentChunkVectors({
     organizationId,
     queryVector: queryEmbedding.vector,
@@ -262,8 +282,11 @@ export async function hybridSearchDocumentChunks(params: {
   embeddingProvider?: EmbeddingProvider;
   /** §AI 상담 개편 - when set, restricts retrieval to this one contract (still nested inside organizationId - never a substitute for it). */
   contractId?: string;
+  /** §AI 답변 품질 개편 P0-1 - bounded, already-authorized recent turns. See conversation-context.ts. */
+  history?: readonly ConversationTurn[];
 }): Promise<HybridSearchChunkResultItem[]> {
   const topK = params.topK ?? DEFAULT_TOP_K;
+  const history = params.history ?? [];
   const cache = getCacheProvider();
   const embeddingProvider = params.embeddingProvider ?? getEmbeddingProvider();
   const vectorSearchProvider = getDocumentChunkVectorSearchProvider();
@@ -271,7 +294,7 @@ export async function hybridSearchDocumentChunks(params: {
     `retrieval:chunk:${vectorSearchProvider.providerName}:${embeddingProvider.providerName}:` +
     `${embeddingProvider.modelName}:${embeddingProvider.dimension}:w${CHUNK_SEARCH_WEIGHT_VERSION}:` +
     `ch${DOCUMENT_CHUNKER_VERSION}:c${CITATION_VALIDATOR_VERSION}:` +
-    `${params.organizationId}:${hashCacheInput(params.question, String(topK), params.contractId ?? "")}`;
+    `${params.organizationId}:${hashCacheInput(params.question, String(topK), params.contractId ?? "", buildHistoryFingerprint(history))}`;
 
   const currentChecksum = await getLatestChunkEmbeddingGenerationChecksum(params.organizationId);
 
@@ -301,6 +324,7 @@ export async function hybridSearchDocumentChunks(params: {
       topK,
       embeddingProvider,
       contractId: params.contractId,
+      history,
     });
 
     const toCache: CachedChunkRetrieval = { embeddingChecksum: currentChecksum, results };

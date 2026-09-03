@@ -8,8 +8,9 @@ export type ConversationRow = Prisma.ConversationGetPayload<Record<string, never
 export type MessageRow = Prisma.MessageGetPayload<Record<string, never>>;
 export type MessageWithCitations = Prisma.MessageGetPayload<{ include: { citations: true } }>;
 
+/** `contractId` is set ONCE at creation and never updated afterward - see Conversation.contractId's own schema doc comment for the security rationale (§AI 답변 품질 개편 P0-1). `undefined`/omitted stores null (an org-wide conversation), matching Prisma's own optional-field convention. */
 export async function createConversation(
-  data: { organizationId: string; userId: string; title?: string },
+  data: { organizationId: string; userId: string; title?: string; contractId?: string },
   client: DbClient = prisma
 ): Promise<ConversationRow> {
   return client.conversation.create({ data });
