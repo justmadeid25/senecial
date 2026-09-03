@@ -131,6 +131,12 @@ export function LandingPage() {
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 text-xs text-muted-foreground">
           <span>&copy; {new Date().getFullYear()} Senecial</span>
           <div className="flex items-center gap-4">
+            <Link href="/privacy" className="hover:text-foreground">
+              개인정보처리방침
+            </Link>
+            <Link href="/terms" className="hover:text-foreground">
+              이용약관
+            </Link>
             <Link href="/login" className="hover:text-foreground">
               로그인
             </Link>

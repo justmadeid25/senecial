@@ -191,6 +191,17 @@ export function AiChat({ scopedContract }: { scopedContract?: { id: string; titl
 
   return (
     <div className="space-y-4">
+      <p
+        data-testid="ai-disclosure-banner"
+        className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+      >
+        AI 답변은 계약서 검토를 돕기 위한 참고 정보이며 오류가 있을 수 있습니다. 중요한 판단 전에는 표시된
+        계약서 근거를 직접 확인하세요. 법률 자문을 대체하지 않습니다.{" "}
+        <Link href="/privacy" className="underline underline-offset-2 hover:text-foreground">
+          개인정보처리방침
+        </Link>
+      </p>
+
       {scopedContract && (
         <div
           data-testid="ai-scoped-contract-banner"

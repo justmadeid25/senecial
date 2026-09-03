@@ -106,6 +106,14 @@ export function SignupForm() {
 
       {formError && <p className="text-sm text-destructive">{formError}</p>}
 
+      <p className="text-center text-xs text-muted-foreground">
+        가입 전 <Link href="/terms" className="underline underline-offset-2 hover:text-foreground">이용약관</Link>과{" "}
+        <Link href="/privacy" className="underline underline-offset-2 hover:text-foreground">
+          개인정보처리방침
+        </Link>
+        을 확인해 주세요.
+      </p>
+
       <Button type="submit" disabled={isSubmitting} className="w-full">
         {isSubmitting ? "가입 처리 중..." : "회원가입"}
       </Button>

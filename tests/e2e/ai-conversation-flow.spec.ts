@@ -157,6 +157,10 @@ test.describe.serial("AI conversation: real citation + hallucination-guard fallb
     await logIn(page);
     await page.goto("/ai");
 
+    // §Closed Beta P0 legal/AI disclosure - the static disclosure banner is
+    // visible on page load, once, and must not block or delay streaming.
+    await expect(page.getByTestId("ai-disclosure-banner")).toBeVisible();
+
     await page.getByPlaceholder("예: 이 계약의 해지 조건은 무엇인가요?").fill("계약을 해지하려면 어떻게 해야 하나요?");
     await page.getByRole("button", { name: "질문하기" }).click();
 

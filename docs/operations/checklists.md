@@ -19,6 +19,10 @@
 - [ ] 새 migration이 있다면 `prisma migrate dev`로 로컬 생성 후 커밋되어 있는지(운영에서는 `migrate deploy`만 사용 - 아래 배포 절차 참고), CI의 migration-validation job(빈 DB에 대한 drift 검사)이 통과했는지
 - [ ] 파괴적 migration(컬럼/테이블 삭제, NOT NULL 추가 등)이라면 backward-compatible(expand-and-contract)로 분리했는지, 그리고 리뷰에서 롤백 가능 여부를 판단했는지 - [deployment.md의 롤백 절](./deployment.md)
 - [ ] 새 환경변수가 필요하다면 `.env.example`/`validate-production-readiness.ts`에 반영했는지
+- [ ] (초대 전용 Closed Beta → 공개/오픈 가입 또는 정식(상업적) 런칭 전환 시 1회) 아래 항목을 재검토:
+  - 가입 화면에 이용약관/개인정보처리방침 명시적 동의(체크박스 등)를 추가할지 재검토 - 현재는 3-5인 초대 전용 베타 사용자 대상이라 안내 링크만 노출하고 강제 동의는 의도적으로 넣지 않았음(`src/features/auth/components/signup-form.tsx`).
+  - `/terms`의 운영 주체 정보 재검토 - 현재는 "개인이 운영하는 Closed Beta 서비스"로 명시(법인/사업자 아님). 이후 법인 설립·사업자 등록 등 실제 사업자 정보가 생기면 `src/app/terms/page.tsx`의 "11. 운영 주체 및 문의처"를 법인명·사업자등록번호·대표자명·주소로 갱신.
+  - `/privacy`를 그 시점의 실제 프로세서/데이터 흐름(3rd-party 목록, AI 처리 방식, 보관/삭제 동작 등)과 다시 대조해 최신 상태인지 확인.
 
 ## 배포 절차 체크리스트
 

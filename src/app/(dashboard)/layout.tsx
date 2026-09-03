@@ -78,6 +78,16 @@ export default async function DashboardLayout({
           {children}
         </div>
       </main>
+      <footer className="border-t border-border bg-background">
+        <div className="mx-auto flex max-w-6xl items-center gap-4 px-6 py-3 text-xs text-muted-foreground">
+          <Link href="/privacy" className="hover:text-foreground">
+            개인정보처리방침
+          </Link>
+          <Link href="/terms" className="hover:text-foreground">
+            이용약관
+          </Link>
+        </div>
+      </footer>
     </div>
   );
 }
