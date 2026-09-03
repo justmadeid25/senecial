@@ -52,7 +52,18 @@ RUN corepack enable
 # ---------------------------------------------------------------------------
 FROM base AS deps
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# prisma.config.ts + prisma/schema.prisma are required here, not just in the
+# builder stage below - package.json's own `postinstall: prisma generate`
+# runs during `pnpm install` itself, and prisma 7's config-file-based CLI
+# needs both files present to resolve the schema. Confirmed via a real local
+# `docker build`: omitting either one fails `pnpm install --frozen-lockfile`
+# with "Could not find Prisma Schema" before any other stage even runs (same
+# bug found and fixed in Dockerfile.worker's identical deps stage). Only
+# these two files - not the rest of prisma/ (migrations, seed scripts) - so
+# this layer's cache still only invalidates on a real dependency or schema
+# change.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml prisma.config.ts ./
+COPY prisma/schema.prisma ./prisma/schema.prisma
 RUN pnpm install --frozen-lockfile
 
 # ---------------------------------------------------------------------------

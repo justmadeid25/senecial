@@ -1,0 +1,101 @@
+name: Docker build and push (worker)
+
+# Companion to docker.yml (the production web image). Builds and pushes the
+# Railway worker image (Dockerfile.worker) on every merge to master, tagged
+# with the immutable git commit SHA plus a movable `staging` pointer tag -
+# the exact same convention docker.yml uses for the web image (never
+# `latest` alone).
+#
+# Deliberately a SEPARATE workflow file rather than a second job inside
+# docker.yml: staging-deploy.yml triggers off docker.yml's own workflow_run
+# completion and gates on that run's overall conclusion. A worker-image
+# build failure must never block the web-image staging deploy (or vice
+# versa) - keeping these as two independent workflow runs means neither
+# build's pass/fail state is coupled to the other's.
+#
+# This workflow only builds and pushes an image to GHCR. It does not deploy
+# anything, and does not modify Railway or any other external service - no
+# job here has permission to do so (packages: write is scoped to GHCR only).
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+concurrency:
+  group: docker-worker-build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # Distinct package/repository from the web image (${{ github.repository }}
+  # in docker.yml) so the worker image is never confused with, and never
+  # overwrites tags on, the web image.
+  IMAGE_NAME: ${{ github.repository }}-worker
+
+jobs:
+  build-and-push-worker:
+    name: Build and push worker image
+    runs-on: ubuntu-latest
+    outputs:
+      image_sha_tag: ${{ steps.tags.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          echo "sha_tag=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: true
+          build-args: |
+            GIT_COMMIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ steps.tags.outputs.build_date }}
+          tags: |
+            ${{ steps.tags.outputs.sha_tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging
+          # Separate cache scope from docker.yml's web-image build so the two
+          # workflows' GHA caches never contend with or evict each other.
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
+
+      # Same check as docker.yml's web image build - confirm no secret-shaped
+      # value is baked into any layer's build-time history (ENV/ARG/RUN
+      # command text only; not a substitute for never COPYing a real .env
+      # file into the image, which .dockerignore already prevents).
+      - name: Inspect image history for leaked secrets
+        run: |
+          docker pull ${{ steps.tags.outputs.sha_tag }}
+          HISTORY=$(docker history --no-trunc ${{ steps.tags.outputs.sha_tag }})
+          echo "$HISTORY"
+          if echo "$HISTORY" | grep -qiE "DATABASE_URL=|AUTH_SECRET=|AWS_SECRET|POSTMARK_SERVER_TOKEN=|REDIS_URL=.*:.*@|BACKUP_AGE_IDENTITY="; then
+            echo "::error::A secret-shaped value was found baked into an image layer - see docker history output above."
+            exit 1
+          fi
+
+      - name: Confirm non-root user
+        run: |
+          USER_OUT=$(docker inspect --format='{{.Config.User}}' ${{ steps.tags.outputs.sha_tag }})
+          echo "Image USER: $USER_OUT"
+          if [ -z "$USER_OUT" ] || [ "$USER_OUT" = "root" ] || [ "$USER_OUT" = "0" ]; then
+            echo "::error::Image runs as root (USER='$USER_OUT') - expected the non-root 'node' user."
+            exit 1
+          fi

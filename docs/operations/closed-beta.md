@@ -24,7 +24,7 @@ P0가 발생하면 "의심"만으로도 즉시 아래 절차를 실행합니다 
    WHERE id IN (<현재 베타 조직 id 목록>);
    ```
    해제는 동일 쿼리에서 `= true`로 되돌립니다. `allowExternalAiProcessing = false`는 별도로 "AI 자체는 켜져 있지만 외부 제공자로는 보내지 않음" 상태를 만듭니다(외부 유출이 의심될 때 더 정밀한 선택지).
-3. **워커 중단(필요 시)**: `extraction:process`/`clauses:process`/`ai:process-embeddings`/`ai:process-chunk-embeddings` 등은 외부 cron/scheduler가 트리거하는 CLI 스크립트입니다([batch-jobs.md](./batch-jobs.md) - 애플리케이션 자체에는 내장 워커 루프가 없습니다). 중단하려면 해당 cron 항목을 비활성화하거나 워커 프로세스/컨테이너를 정지시킵니다. PENDING 상태로 남은 작업은 데이터 손실 없이 그대로 대기하며, 워커를 재개하면 이어서 처리됩니다.
+3. **워커 중단(필요 시)**: `extraction:process`/`clauses:process`/`ai:process-embeddings`/`ai:process-chunk-embeddings` 등은 `scripts/worker-scheduler.ts`(`Dockerfile.worker`, 상시 실행 단일 프로세스)가 자체 주기로 트리거하는 CLI 스크립트입니다 — 외부 cron이 아닙니다([batch-jobs.md](./batch-jobs.md) 참고; 외부 cron으로 개별 스크립트를 트리거하는 대안 구조도 문서화되어 있으나 기본 경로는 아닙니다). 중단하려면 이 worker 프로세스/컨테이너 자체를 정지시킵니다(대안 구조를 쓰는 경우에는 해당 cron 항목을 비활성화). PENDING 상태로 남은 작업은 데이터 손실 없이 그대로 대기하며, 워커를 재개하면 이어서 처리됩니다. **주의**: 실제 운영 환경에 이 worker가 배포되어 있는지, 어떤 컨테이너/서비스로 동작 중인지는 이 문서만으로 확정할 수 없습니다 — 중단 조치 전 대상 서비스를 실제로 확인하십시오.
 4. **로그/증거 보존**: 의심스러운 사고라면 [incident-response.md](./incident-response.md) §4(`retention:purge` 일시 중단, 로그/`audit_logs` 별도 백업)를 즉시 실행합니다.
 5. **데이터 파괴 금지**: 이 단계에서는 어떤 데이터도 삭제하지 않습니다 — 중단은 접근/처리를 멈추는 것이지 데이터를 지우는 것이 아닙니다.
 6. **영향받은 조직 식별**: `audit_logs`를 `organizationId`/`action`/시간대로 조회해 영향 범위를 좁힙니다(예: 특정 시간대에 발생한 `AI_CLAUSE_REVIEW_GENERATED`/`EXTRACTION_JOB_CREATED` 등). 의심되는 테넌트 격리 사고라면 아래 §2를 따릅니다.

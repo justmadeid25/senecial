@@ -74,9 +74,26 @@ LIMIT 50;
 
 - `status='RUNNING'`인 row가 `heartbeatAt` 없이 오래 남아있다면 프로세스가 비정상 종료됐을 가능성이 있습니다 — Postgres advisory lock은 커넥션 종료 시 자동 해제되므로 다음 스케줄 실행은 정상적으로 다시 시작됩니다(수동 조치 불필요). 다만 반복적으로 발생한다면 워커 프로세스 자체의 안정성을 점검하십시오.
 
-## Scheduler 연동 예시
+## Scheduler 연동
 
-이 애플리케이션은 CLI 스크립트만 제공하며, 실제 외부 scheduler는 연결되어 있지 않습니다. 아래는 예시입니다.
+### 구현된 메커니즘: 상시 실행 worker 프로세스 (권장, 기본 경로)
+
+`scripts/worker-scheduler.ts`(`pnpm worker:start`) + `Dockerfile.worker`가 이미 소스에 구현되어 있습니다 — 위 표의 각 CLI 스크립트를 감싸는 별도 외부 cron 없이, 단일 상시 실행 Node 프로세스가 작업별로 독립된 주기(예: 큐 처리 5초, 정체 복구 30초, 유지보수성 작업 5~15분)로 자체 재스케줄링 루프를 돕니다. PID1/SIGTERM 전달, abortable sleep으로 graceful shutdown이 실제 `docker stop` 테스트로 검증되었습니다.
+
+**이 프로세스가 실행하는 작업** (아래 표의 나머지는 이 프로세스에 포함되지 않음, 다음 절 참고): `notifications:generate`, `files:reconcile`, `files:find-orphans`, `extraction:process`/`recover-stale`, `clauses:process`/`recover-stale`/`generate-signals`, `ai:process-embeddings`/`process-chunk-embeddings`/`recover-stale-embeddings`/`scan-stale-embeddings`, `mail:process`, `mail:recover-stale`, `mail:scan-stale-token-deliveries`. 작업 목록은 `scripts/worker-scheduler-jobs.ts`(`JOBS`/`SCRIPT_FILES`)에 있습니다.
+
+**⚠️ 실제 운영 환경(Railway 등)에 이 worker 프로세스가 배포되어 정상 동작 중인지는 이 문서/소스만으로 확인할 수 없습니다.** 배포 후 반드시 외부에서 직접 확인하십시오 — 대상 서비스의 로그에서 부팅 시 한 번 기록되는 `worker_scheduler.started` 이벤트(전체 작업 목록 포함)를 확인하고, `batch_executions` 테이블에 각 작업의 최근 실행 이력이 실제로 쌓이고 있는지 조회하십시오. 이 문서는 "Railway가 이렇게 구성되어 있다"를 주장하지 않습니다 — 소스에 구현되어 있다는 사실과, 배포 후 확인이 필요하다는 점만 기술합니다.
+
+### 의도적으로 이 worker에 포함되지 않은 작업
+
+- **`retention:scan` / `retention:purge`**: 파괴적 작업이라 초기 Closed Beta 동안 운영자 수동 실행 전용으로 명시적으로 제외되어 있습니다. 자동화하지 마십시오.
+- **`mail:recover-stale-token-deliveries`**: 초대/이메일 인증/비밀번호 재설정용 토큰을 rotate(무효화 후 재발급)하는 보안 민감 작업이라, 초기 Closed Beta 동안은 의도적으로 수동 실행 전용으로 남겨둡니다(스크립트 자체는 멱등적이고 동시 실행에 안전합니다 — 위 "정체된 토큰 메일 복구" 절 참고). 활성화 여부는 별도로 재검토합니다.
+
+**`mail:recover-stale`(SENDING 상태의 `PASSWORD_CHANGED` 메일 복구)는 이 worker에 포함되어 자동 실행됩니다** — `mail:process`가 처리하는 유일한 메시지 타입(비밀번호 변경 알림)만을 다루는 낮은 위험도의 정체 복구 작업이라, 다른 `*:recover-stale` 작업과 동일하게 30초 주기로 폴링됩니다.
+
+### 대안: 외부 cron으로 개별 스크립트를 직접 트리거하는 방식
+
+위 상시 실행 worker 프로세스 대신, 아래처럼 각 CLI 스크립트를 외부에서 개별적으로 트리거하는 구조도 여전히 유효한 대안입니다(예: 상시 실행 프로세스를 운영하고 싶지 않은 경우).
 
 ### cron (worker 컨테이너/VM)
 
@@ -107,11 +124,11 @@ jobs:
 
 Vercel Cron은 HTTP 엔드포인트를 호출하는 방식이라, 이 CLI 스크립트들을 그대로 쓰려면 각 작업을 감싸는 Route Handler를 별도로 만들어야 합니다(아직 미구현 — CLI만 제공). 또한 Vercel Functions의 실행 시간 제한을 고려해 배치 크기(`--limit`)를 작게 유지해야 합니다.
 
-### 별도 worker 컨테이너 (권장 운영 구조)
+### 컨테이너 분리 구조 (구현된 상시 실행 worker와 이 cron 대안 모두에 적용)
 
 ```
-web application container   (Next.js, 사용자 요청 처리)
-worker/scheduler container  (위 cron 예시, 배치 실행 전용)
+web application container   (Next.js, 사용자 요청 처리 - Dockerfile)
+worker container            (배치 실행 전용 - Dockerfile.worker, 또는 위 cron 예시)
 PostgreSQL
 Persistent object storage
 ```
