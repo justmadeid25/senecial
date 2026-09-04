@@ -30,7 +30,13 @@ overrides:
   # forcing it to 5.x would hand a package still on the 1.x API a version
   # whose exports changed across that major bump.
   'brace-expansion@>=5.0.0 <5.0.9': 5.0.9
-  fast-uri: 3.1.5
+  # 3.1.5 (this override's original target) was later found to still be
+  # vulnerable to several additional SSRF/host-confusion advisories
+  # (GHSA-5jgf-p345-68v8, GHSA-f65p-4m7j-42xc, GHSA-fph4-wmhf-6fwf,
+  # GHSA-jqff-g426-hqxp) - 3.1.7 is the current real-latest patched
+  # version. ajv@8.20.0's own declared range ("^3.0.1") already permits
+  # it, so this remains a same-major patch bump.
+  fast-uri: 3.1.7
   # GHSA-5p4m-2wfm-xmqj (CVE-2026-59870) - quadratic CPU consumption in
   # !!omap resolution, patched at 4.3.1. Pulled in transitively by
   # @eslint/eslintrc (eslint chain) and cosmiconfig (via the shadcn CLI) -
@@ -38,17 +44,19 @@ overrides:
   # major line, so this is a same-major patch bump, not a major upgrade.
   js-yaml: 4.3.1
   # GHSA-2v37-7h3g-55p8 - custom generators can loop indefinitely when
-  # size is zero, patched at 3.3.17 on the 3.x line (5.x is patched
-  # separately at 5.1.6). Two nanoid versions resolve in this graph:
-  # 3.3.16 (via postcss - pulled in by next/next-auth/shadcn/vite/vitest)
-  # and 5.1.16 (via docx, already >=5.1.6 and NOT vulnerable). Scoped to
-  # `<3.3.17` so this override only ever touches the vulnerable 3.x
-  # resolution, never re-pins the already-safe 5.x one. postcss@8.5.23
-  # already declares "^3.3.16" (a range that already permits 3.3.17), so
-  # this is a same-major patch bump - a plain `pnpm update` did not pick
-  # it up on its own (the lockfile had pinned the range's lower bound),
-  # hence the explicit override rather than a parent-package upgrade.
-  'nanoid@<3.3.17': 3.3.17
+  # size is zero. 3.3.17 (this override's original target) turned out to
+  # still be within the affected range - the advisory's fixed range was
+  # later widened to 3.3.18 on the 3.x line (5.x is patched separately at
+  # 5.1.6). Two nanoid versions resolve in this graph: one via postcss
+  # (pulled in by next/next-auth/shadcn/vite/vitest) and 5.1.16 (via docx,
+  # already >=5.1.6 and NOT vulnerable). Scoped to `<3.3.18` so this
+  # override only ever touches the vulnerable 3.x resolution, never
+  # re-pins the already-safe 5.x one. postcss@8.5.23 already declares
+  # "^3.3.16" (a range that already permits 3.3.18), so this is a
+  # same-major patch bump - a plain `pnpm update` did not pick it up on
+  # its own (the lockfile had pinned the range's lower bound), hence the
+  # explicit override rather than a parent-package upgrade.
+  'nanoid@<3.3.18': 3.3.18
 onlyBuiltDependencies:
   - sharp
   - unrs-resolver
