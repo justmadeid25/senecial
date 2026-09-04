@@ -15,23 +15,40 @@ export async function createRunningBatchExecution(
   });
 }
 
+/**
+ * Guarded by `status: RUNNING` in the WHERE clause (via `updateMany`, which
+ * silently no-ops instead of throwing when zero rows match - unlike
+ * `update`, which requires a unique match). This is what makes the row
+ * transition safe against recover-stale-batch-executions.ts racing a live
+ * worker: whichever of {a fresh heartbeat, a terminal transition, a stale
+ * recovery} lands first in Postgres wins the row (single-statement atomic
+ * UPDATE), and every loser's write simply becomes a no-op rather than
+ * clobbering the winner. Returns whether this call's write actually took
+ * effect, so callers can detect + log a "wrote after the row was already
+ * moved out from under us" condition (see run-batch-job.ts).
+ */
 export async function touchBatchExecutionHeartbeat(
   id: string,
   now: Date,
   client: DbClient = prisma
-): Promise<void> {
-  await client.batchExecution.update({ where: { id }, data: { heartbeatAt: now } });
+): Promise<boolean> {
+  const { count } = await client.batchExecution.updateMany({
+    where: { id, status: BatchExecutionStatus.RUNNING },
+    data: { heartbeatAt: now },
+  });
+  return count > 0;
 }
 
 export async function markBatchExecutionSucceeded(
   id: string,
   data: { completedAt: Date; processedCount: number; successCount: number; failureCount: number },
   client: DbClient = prisma
-): Promise<void> {
-  await client.batchExecution.update({
-    where: { id },
+): Promise<boolean> {
+  const { count } = await client.batchExecution.updateMany({
+    where: { id, status: BatchExecutionStatus.RUNNING },
     data: { status: BatchExecutionStatus.SUCCEEDED, ...data },
   });
+  return count > 0;
 }
 
 /** `errorCode` must already be a short, safe classification - never a raw exception message (see server/batch/safe-error-code.ts). */
@@ -45,11 +62,12 @@ export async function markBatchExecutionFailed(
     failureCount: number;
   },
   client: DbClient = prisma
-): Promise<void> {
-  await client.batchExecution.update({
-    where: { id },
+): Promise<boolean> {
+  const { count } = await client.batchExecution.updateMany({
+    where: { id, status: BatchExecutionStatus.RUNNING },
     data: { status: BatchExecutionStatus.FAILED, ...data },
   });
+  return count > 0;
 }
 
 export async function findRecentBatchExecutions(

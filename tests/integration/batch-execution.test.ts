@@ -225,4 +225,100 @@ describe("runBatchJob (§27/§28/§48)", () => {
     const skippedCount = [a, b].filter((r) => r.skipped).length;
     expect(skippedCount).toBe(1);
   });
+
+  it("automatically refreshes heartbeatAt while a real job body is still running, with no job author calling ctx.heartbeat()", async () => {
+    const jobName = uniqueJobName("auto-heartbeat");
+    let heartbeatAtMidFlight: Date | null = null;
+
+    const outcome = await runBatchJob({
+      jobName,
+      cadence: "instant",
+      heartbeatIntervalMs: 30,
+      run: async () => {
+        // Long enough, at a 30ms interval, to guarantee at least one
+        // automatic tick has landed before we read the row back.
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const row = await prisma.batchExecution.findFirst({ where: { jobName } });
+        heartbeatAtMidFlight = row?.heartbeatAt ?? null;
+        return { processedCount: 1, successCount: 1, failureCount: 0 };
+      },
+    });
+
+    expect(outcome.skipped).toBe(false);
+    if (outcome.skipped) throw new Error("unreachable");
+
+    const startedRow = await prisma.batchExecution.findUniqueOrThrow({ where: { id: outcome.executionId } });
+    expect(heartbeatAtMidFlight).not.toBeNull();
+    // The automatic loop refreshed heartbeatAt strictly past its own
+    // startedAt - proof the write-once behavior from before this
+    // changeset is gone, with no ctx.heartbeat() call anywhere in this
+    // job body.
+    expect(heartbeatAtMidFlight!.getTime()).toBeGreaterThan(startedRow.startedAt.getTime());
+    expect(startedRow.status).toBe("SUCCEEDED");
+  });
+
+  it("stops the automatic heartbeat loop immediately once the job succeeds - no further ticks after completion", async () => {
+    const jobName = uniqueJobName("auto-heartbeat-stops-on-success");
+
+    const outcome = await runBatchJob({
+      jobName,
+      cadence: "instant",
+      heartbeatIntervalMs: 20,
+      run: async () => ({ processedCount: 1, successCount: 1, failureCount: 0 }),
+    });
+    expect(outcome.skipped).toBe(false);
+    if (outcome.skipped) throw new Error("unreachable");
+
+    const afterCompletion = await prisma.batchExecution.findUniqueOrThrow({ where: { id: outcome.executionId } });
+    // Give any (incorrectly still-running) loop several interval-lengths
+    // to prove it does NOT tick again after the row already went terminal.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const later = await prisma.batchExecution.findUniqueOrThrow({ where: { id: outcome.executionId } });
+
+    expect(later.status).toBe("SUCCEEDED");
+    expect(later.heartbeatAt!.getTime()).toBe(afterCompletion.heartbeatAt!.getTime());
+  });
+
+  it("stops the automatic heartbeat loop immediately once the job throws - no further ticks after the FAILED transition", async () => {
+    const jobName = uniqueJobName("auto-heartbeat-stops-on-failure");
+
+    await expect(
+      runBatchJob({
+        jobName,
+        cadence: "instant",
+        heartbeatIntervalMs: 20,
+        run: async () => {
+          throw new Error("boom");
+        },
+      })
+    ).rejects.toThrow();
+
+    const row = await prisma.batchExecution.findFirstOrThrow({ where: { jobName } });
+    expect(row.status).toBe("FAILED");
+    const heartbeatAfterFailure = row.heartbeatAt!.getTime();
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const later = await prisma.batchExecution.findUniqueOrThrow({ where: { id: row.id } });
+    expect(later.heartbeatAt!.getTime()).toBe(heartbeatAfterFailure);
+  });
+
+  it("manual ctx.heartbeat() still works alongside the automatic loop, for a job author that wants an explicit immediate refresh", async () => {
+    const jobName = uniqueJobName("manual-ctx-heartbeat");
+
+    const outcome = await runBatchJob({
+      jobName,
+      cadence: "instant",
+      heartbeatIntervalMs: 5000, // automatic loop won't tick within this test's short lifetime
+      run: async (ctx) => {
+        const before = await prisma.batchExecution.findFirstOrThrow({ where: { jobName } });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await ctx.heartbeat();
+        const after = await prisma.batchExecution.findFirstOrThrow({ where: { jobName } });
+        expect(after.heartbeatAt!.getTime()).toBeGreaterThan(before.heartbeatAt!.getTime());
+        return { processedCount: 1, successCount: 1, failureCount: 0 };
+      },
+    });
+
+    expect(outcome.skipped).toBe(false);
+  });
 });

@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 
+import { BATCH_HEARTBEAT_INTERVAL_MS } from "@/domain/batch/batch-heartbeat-timing";
 import { buildExecutionKey, buildLockKey, type BatchCadence } from "@/domain/batch/execution-key";
 import { getLogger } from "@/server/logging";
 import { recordBatchDuration } from "@/server/monitoring/metrics";
 import { acquireAdvisoryLock } from "./advisory-lock";
+import { startBatchHeartbeatLoop } from "./batch-heartbeat-loop";
 import {
   createRunningBatchExecution,
   markBatchExecutionFailed,
@@ -44,6 +46,15 @@ export interface RunBatchJobParams<T extends BatchJobCounts> {
    * this Phase).
    */
   force?: boolean;
+  /**
+   * Test-only override for the automatic heartbeat loop's interval
+   * (defaults to the real BATCH_HEARTBEAT_INTERVAL_MS constant) - lets
+   * integration tests observe multiple real heartbeat ticks without
+   * waiting real minutes, the same role `now` already plays for the
+   * window/threshold side of this function. Never set by a real caller -
+   * no script or scheduler entry passes this.
+   */
+  heartbeatIntervalMs?: number;
   run: (ctx: BatchJobContext) => Promise<T>;
 }
 
@@ -65,8 +76,17 @@ export type RunBatchJobResult<T> = { skipped: true } | { skipped: false; executi
  *     within the same window, plus the durable history/heartbeat record
  *     §48 asks for.
  *  4. structured log at start/success/failure (§31).
- *  5. `ctx.heartbeat()` available to long-running jobs.
- *  6. job body (`run`) executed.
+ *  5. an automatic heartbeat loop starts, refreshing heartbeatAt every
+ *     BATCH_HEARTBEAT_INTERVAL_MS for as long as the job body below is
+ *     running - this is what makes `heartbeatAt` an actual liveness
+ *     signal (see batch-heartbeat-loop.ts) rather than the write-once
+ *     value it used to be. `ctx.heartbeat()` also remains available as an
+ *     explicit, immediate primitive for a job that knows it's entering an
+ *     unusually long blocking phase, but correctness no longer depends on
+ *     any job author remembering to call it.
+ *  6. job body (`run`) executed; the heartbeat loop is stopped (awaiting
+ *     any in-flight write) the instant the job body settles, before any
+ *     terminal-state write below.
  *  7/8. processed/success/failure counts recorded.
  *  9. RUNNING -> SUCCEEDED or FAILED (errorCode only, never the raw
  *     exception message - see safe-error-code.ts).
@@ -119,20 +139,52 @@ export async function runBatchJob<T extends BatchJobCounts>(
 
     logger.info("batch.started", { jobName: params.jobName, executionKey, executionId: execution.id });
 
+    const heartbeatLoop = startBatchHeartbeatLoop(execution.id, {
+      touch: touchBatchExecutionHeartbeat,
+      intervalMs: params.heartbeatIntervalMs ?? BATCH_HEARTBEAT_INTERVAL_MS,
+      jobName: params.jobName,
+    });
+
     try {
-      const result = await params.run({
-        heartbeat: () => touchBatchExecutionHeartbeat(execution.id, new Date()),
-      });
+      let result: T;
+      try {
+        result = await params.run({
+          heartbeat: async () => {
+            await touchBatchExecutionHeartbeat(execution.id, new Date());
+          },
+        });
+      } finally {
+        // Stop the instant the job body settles (success or throw) -
+        // before any terminal-state write below, so a heartbeat write is
+        // never in flight racing the row's own transition out of RUNNING.
+        await heartbeatLoop.stop();
+      }
 
       const completedAt = new Date();
       const durationMs = completedAt.getTime() - now.getTime();
-      await markBatchExecutionSucceeded(execution.id, {
+      const applied = await markBatchExecutionSucceeded(execution.id, {
         completedAt,
         processedCount: result.processedCount ?? 0,
         successCount: result.successCount ?? 0,
         failureCount: result.failureCount ?? 0,
       });
       recordBatchDuration(params.jobName, durationMs);
+
+      if (!applied) {
+        // The row was already moved out of RUNNING by something else (most
+        // likely recover-stale-batch-executions.ts) before this real
+        // completion landed - the guarded update in
+        // markBatchExecutionSucceeded() no-opped rather than clobbering
+        // whatever terminal state is already there. The job itself still
+        // completed successfully, so this is not thrown as an error, only
+        // logged - it signals the stale threshold may be too tight for
+        // this job's actual worst-case duration.
+        logger.warn("batch.succeeded_after_already_terminal", {
+          jobName: params.jobName,
+          executionId: execution.id,
+          durationMs,
+        });
+      }
 
       logger.info("batch.succeeded", {
         jobName: params.jobName,
@@ -144,7 +196,7 @@ export async function runBatchJob<T extends BatchJobCounts>(
       return { skipped: false, executionId: execution.id, result };
     } catch (error) {
       const errorCode = toSafeBatchErrorCode(error);
-      await markBatchExecutionFailed(execution.id, {
+      const applied = await markBatchExecutionFailed(execution.id, {
         completedAt: new Date(),
         errorCode,
         processedCount: 0,
@@ -152,6 +204,13 @@ export async function runBatchJob<T extends BatchJobCounts>(
         failureCount: 0,
       });
       recordBatchDuration(params.jobName, Date.now() - now.getTime());
+      if (!applied) {
+        logger.warn("batch.failed_after_already_terminal", {
+          jobName: params.jobName,
+          executionId: execution.id,
+          errorCode,
+        });
+      }
       logger.error("batch.failed", { jobName: params.jobName, executionId: execution.id, errorCode });
       throw error;
     }

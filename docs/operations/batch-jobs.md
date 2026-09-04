@@ -18,6 +18,7 @@
 | `pnpm mail:recover-stale` | 매 1~5분 | instant | 정체된 메일 전송(SENDING) 복구 |
 | `pnpm mail:scan-stale-token-deliveries` | 매 5~15분 | 없음(읽기 전용, 항상 재실행 가능) | 정체된 토큰 메일(PENDING) 탐지·리포트만 |
 | `pnpm mail:recover-stale-token-deliveries` | 매 5~15분 | 없음(내부적으로 행 단위 원자적 가드) | 정체된 토큰 메일 안전 복구 |
+| `pnpm batch:recover-stale` | 매 1~5분 | instant | `batch_executions`에 남은 정체된 RUNNING row 복구(→ FAILED, `errorCode=ORPHANED_STALE_HEARTBEAT`) - `/api/health/ready`의 `batch` 체크가 영구적으로 error가 되는 것을 방지 |
 
 `pnpm mail:process`는 `PASSWORD_CHANGED` 메일만 처리합니다 — 조직 초대/이메일 인증/비밀번호 재설정 메일은 토큰 원문을 DB에 저장하지 않는다는 불변 조건 때문에 요청 처리 중 동기적으로 발송되며 이 워커가 처리할 대상에 애초에 포함되지 않습니다(README의 "Outbox 아키텍처" 절 참고).
 
@@ -72,7 +73,7 @@ ORDER BY "startedAt" DESC
 LIMIT 50;
 ```
 
-- `status='RUNNING'`인 row가 `heartbeatAt` 없이 오래 남아있다면 프로세스가 비정상 종료됐을 가능성이 있습니다 — Postgres advisory lock은 커넥션 종료 시 자동 해제되므로 다음 스케줄 실행은 정상적으로 다시 시작됩니다(수동 조치 불필요). 다만 반복적으로 발생한다면 워커 프로세스 자체의 안정성을 점검하십시오.
+- `heartbeatAt`은 더 이상 row 생성 시점에 한 번만 기록되는 값이 아닙니다 — `runBatchJob()`이 job body가 실행되는 동안 자동으로 5분 간격(`BATCH_HEARTBEAT_INTERVAL_MINUTES`, `src/domain/batch/batch-heartbeat-timing.ts`)으로 갱신합니다. `status='RUNNING'`인 row의 `heartbeatAt`이 30분(`STALE_BATCH_HEARTBEAT_MINUTES`) 넘게 갱신되지 않았다면 프로세스가 비정상 종료됐다는 신뢰할 수 있는 신호이며, `batch:recover-stale`이 해당 row를 `FAILED`(`errorCode=ORPHANED_STALE_HEARTBEAT`)로 자동 복구합니다 — Postgres advisory lock은 커넥션 종료 시 자동 해제되므로 다음 스케줄 실행은 정상적으로 다시 시작됩니다(수동 조치 불필요). 다만 반복적으로 발생한다면 워커 프로세스 자체의 안정성을 점검하십시오.
 
 ## Scheduler 연동
 
@@ -80,7 +81,7 @@ LIMIT 50;
 
 `scripts/worker-scheduler.ts`(`pnpm worker:start`) + `Dockerfile.worker`가 이미 소스에 구현되어 있습니다 — 위 표의 각 CLI 스크립트를 감싸는 별도 외부 cron 없이, 단일 상시 실행 Node 프로세스가 작업별로 독립된 주기(예: 큐 처리 5초, 정체 복구 30초, 유지보수성 작업 5~15분)로 자체 재스케줄링 루프를 돕니다. PID1/SIGTERM 전달, abortable sleep으로 graceful shutdown이 실제 `docker stop` 테스트로 검증되었습니다.
 
-**이 프로세스가 실행하는 작업** (아래 표의 나머지는 이 프로세스에 포함되지 않음, 다음 절 참고): `notifications:generate`, `files:reconcile`, `files:find-orphans`, `extraction:process`/`recover-stale`, `clauses:process`/`recover-stale`/`generate-signals`, `ai:process-embeddings`/`process-chunk-embeddings`/`recover-stale-embeddings`/`scan-stale-embeddings`, `mail:process`, `mail:recover-stale`, `mail:scan-stale-token-deliveries`. 작업 목록은 `scripts/worker-scheduler-jobs.ts`(`JOBS`/`SCRIPT_FILES`)에 있습니다.
+**이 프로세스가 실행하는 작업** (아래 표의 나머지는 이 프로세스에 포함되지 않음, 다음 절 참고): `notifications:generate`, `files:reconcile`, `files:find-orphans`, `extraction:process`/`recover-stale`, `clauses:process`/`recover-stale`/`generate-signals`, `ai:process-embeddings`/`process-chunk-embeddings`/`recover-stale-embeddings`/`scan-stale-embeddings`, `mail:process`, `mail:recover-stale`, `mail:scan-stale-token-deliveries`, `batch:recover-stale`. 작업 목록은 `scripts/worker-scheduler-jobs.ts`(`JOBS`/`SCRIPT_FILES`)에 있습니다.
 
 **⚠️ 실제 운영 환경(Railway 등)에 이 worker 프로세스가 배포되어 정상 동작 중인지는 이 문서/소스만으로 확인할 수 없습니다.** 배포 후 반드시 외부에서 직접 확인하십시오 — 대상 서비스의 로그에서 부팅 시 한 번 기록되는 `worker_scheduler.started` 이벤트(전체 작업 목록 포함)를 확인하고, `batch_executions` 테이블에 각 작업의 최근 실행 이력이 실제로 쌓이고 있는지 조회하십시오. 이 문서는 "Railway가 이렇게 구성되어 있다"를 주장하지 않습니다 — 소스에 구현되어 있다는 사실과, 배포 후 확인이 필요하다는 점만 기술합니다.
 

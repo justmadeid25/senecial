@@ -65,6 +65,7 @@
     "test:e2e:preflight": "dotenv -e .env.e2e -- tsx scripts/e2e-preflight.ts",
     "test:e2e:verify-cleanup": "dotenv -e .env.e2e -- tsx scripts/e2e-verify-cleanup.ts",
     "db:verify-migrations": "tsx scripts/verify-migrations.ts",
+    "batch:recover-stale": "tsx scripts/recover-stale-batch-executions.ts",
     "demo:seed-contracts": "tsx scripts/seed-demo-contracts-bulk.ts",
     "demo:enrich-contracts": "tsx scripts/enrich-demo-contracts.ts",
     "release:verify": "tsx scripts/release-verify.ts",

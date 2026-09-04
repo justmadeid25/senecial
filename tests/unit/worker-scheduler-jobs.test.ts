@@ -56,4 +56,23 @@ describe("worker-scheduler-jobs registry", () => {
   it("mail:recover-stale maps to the real recover-stale-mail-deliveries.ts script", () => {
     expect(scriptFileFor("mail:recover-stale")).toBe("recover-stale-mail-deliveries.ts");
   });
+
+  it("includes batch:recover-stale (orphaned batch_executions recovery)", () => {
+    expect(JOBS.some((job) => job.script === "batch:recover-stale")).toBe(true);
+  });
+
+  it("batch:recover-stale maps to the real recover-stale-batch-executions.ts script", () => {
+    expect(scriptFileFor("batch:recover-stale")).toBe("recover-stale-batch-executions.ts");
+  });
+
+  it("gives batch:recover-stale the same conservative poll interval as the other Tier B recovery jobs", () => {
+    const job = JOBS.find((j) => j.script === "batch:recover-stale");
+    expect(job).toBeDefined();
+    const recoveryJob = JOBS.find((j) => j.script === "ai:recover-stale-embeddings");
+    expect(job!.pollIntervalMs).toBe(recoveryJob!.pollIntervalMs);
+  });
+
+  it("registers exactly the expected total job count for this release", () => {
+    expect(JOBS.length).toBe(16);
+  });
 });

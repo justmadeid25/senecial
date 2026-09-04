@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 
+import { STALE_BATCH_HEARTBEAT_MINUTES } from "@/domain/batch/batch-heartbeat-timing";
 import { getVersionInfo } from "@/domain/production-readiness/version-info";
 import { loadEmailConfig, validateEmailConfig } from "@/lib/config/email";
 import { resolveS3Config } from "@/lib/config/s3";
@@ -24,9 +25,6 @@ export interface ReadinessResult {
   version: string;
   buildDate: string;
 }
-
-/** A RUNNING BatchExecution whose heartbeat has gone silent this long is presumed to have lost its worker - see recover-stale-*.ts scripts, which are the actual fix; this check only surfaces that something needs them run. */
-const STALE_BATCH_HEARTBEAT_MINUTES = 30;
 
 /**
  * §34 - never includes DB host, storage path, bucket name, Redis host, or

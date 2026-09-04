@@ -64,6 +64,16 @@ const QUEUE_TEST_FILES = [
   // processNextEmbeddingJob()/processNextChunkEmbeddingJob() during its
   // fixture setup.
   "tests/integration/ai-citation-precision.test.ts",
+  // recoverStaleBatchExecutions() operates on the ENTIRE batch_executions
+  // table (status='RUNNING' AND heartbeatAt < cutoff, no jobName/org
+  // scoping - it must not miss an orphaned row from ANY job) - the same
+  // "global shared state, not scoped like everything else" shape as the
+  // queue-claim functions above. Running this file in parallel with
+  // health-check.test.ts's own stale-row fixture (in the "default"
+  // project) is a real, observed race: this file's recovery calls can
+  // flip that test's manually-created stale RUNNING row to FAILED before
+  // its own checkReadiness() assertion runs.
+  "tests/integration/recover-stale-batch-executions.test.ts",
 ];
 
 /**

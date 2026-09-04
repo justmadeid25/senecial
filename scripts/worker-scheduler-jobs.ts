@@ -27,6 +27,10 @@ export const JOBS: ScheduledJob[] = [
   { script: "clauses:recover-stale", pollIntervalMs: 30_000 },
   { script: "ai:recover-stale-embeddings", pollIntervalMs: 30_000 },
   { script: "mail:recover-stale", pollIntervalMs: 30_000 },
+  // §Closed Beta - a stuck RUNNING batch_executions row (worker/container
+  // killed mid-job) permanently poisons /api/health/ready's `batch` check
+  // otherwise - see src/server/batch/recover-stale-batch-executions.ts.
+  { script: "batch:recover-stale", pollIntervalMs: 30_000 },
   { script: "ai:scan-stale-embeddings", pollIntervalMs: 60_000 },
   { script: "clauses:generate-signals", pollIntervalMs: 60_000 },
 
@@ -58,6 +62,7 @@ export const SCRIPT_FILES: Record<string, string> = {
   "ai:scan-stale-embeddings": "scan-stale-embeddings.ts",
   "mail:process": "process-mail-deliveries.ts",
   "mail:recover-stale": "recover-stale-mail-deliveries.ts",
+  "batch:recover-stale": "recover-stale-batch-executions.ts",
   "mail:scan-stale-token-deliveries": "scan-stale-token-deliveries.ts",
   "files:reconcile": "reconcile-deleted-files.ts",
   "files:find-orphans": "find-orphan-files.ts",
