@@ -144,33 +144,19 @@ jobs:
         # declared `Unsupported("vector(256)")` in schema.prisma (Prisma has
         # no declarative syntax for a pgvector HNSW index on an Unsupported
         # column) - `prisma migrate diff` therefore ALWAYS proposes dropping
-        # `clause_embeddings_vector_native_hnsw_idx` (created via raw SQL in
-        # 20260804090000_restore_pgvector_hnsw_index/migration.sql), even on
-        # a perfectly healthy database. This is a permanent, unavoidable gap
-        # given Prisma's current pgvector support, not real drift - every
-        # prior CI run on this repo failed here for exactly this reason.
-        # `db:verify-migrations` below is the authoritative check that this
-        # specific index/extension DOES exist; this step's job is only to
+        # every hand-authored HNSW index it finds on such a column (currently
+        # two - see scripts/migration-drift-filter.ts), even on a perfectly
+        # healthy database. This is a permanent, unavoidable gap given
+        # Prisma's current pgvector support, not real drift. The actual
+        # filtering logic lives in scripts/migration-drift-filter.ts (unit
+        # tested in tests/unit/migration-drift-filter.test.ts, matches the
+        # tolerated gap structurally by index-name convention, not one
+        # hardcoded name) so this step is just plumbing.
+        # `db:verify-migrations` below is the authoritative check that these
+        # specific indexes/extension DO exist; this step's job is only to
         # catch any OTHER, genuinely unexpected difference (e.g. a
         # hand-edited schema.prisma with no corresponding migration).
-        run: |
-          DIFF=$(pnpm exec prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --script)
-          echo "$DIFF"
-          # §Phase 12.5 - REAL bug found here: this `run:` block uses `bash
-          # -e` (GitHub Actions' default), and `grep -v` exits 1 when it
-          # filters out EVERY line (the expected, healthy case - nothing
-          # left to flag) - under `set -e` that aborted this whole script
-          # immediately, before the `if` check below ever ran, failing this
-          # step even when the diff was exactly the one known/allowed
-          # exception. `|| true` neutralizes grep's own exit code; the `if`
-          # below is the only thing that should decide pass/fail here.
-          UNEXPECTED=$(echo "$DIFF" | grep -v -E '^(-- DropIndex|DROP INDEX "clause_embeddings_vector_native_hnsw_idx";|-- This is an empty migration\.|)$' || true)
-          if [ -n "$UNEXPECTED" ]; then
-            echo "::error::Unexpected schema/migration drift beyond the known pgvector HNSW index gap:"
-            echo "$UNEXPECTED"
-            exit 1
-          fi
-          echo "Only the expected, permanent pgvector HNSW index gap - no real drift."
+        run: pnpm exec prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --script | pnpm exec tsx scripts/check-migration-drift.ts
       # §Phase 12.3 Part A (§4) - runs against the PRISTINE database this
       # job just built from scratch via `migrate deploy` above - the
       # strongest possible check that the full migration history (extension/

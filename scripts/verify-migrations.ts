@@ -125,19 +125,36 @@ async function main(): Promise<void> {
       problems.push({ code: "MISSING_EXTENSION", detail: "pg_trgm extension이 설치되어 있지 않습니다" });
     }
 
-    // §4 - HNSW index + pg_trgm GIN index.
+    // §4 - HNSW index(es) + pg_trgm GIN index. Every pgvector-native column
+    // (a schema.prisma `Unsupported("vector(...)")` field) gets its HNSW
+    // index created via raw SQL in its own migration, since Prisma has no
+    // declarative syntax for it - see the drift-check tolerance in
+    // scripts/migration-drift-filter.ts for the corresponding CI-side gap
+    // this causes. Checked as a list, matching that same
+    // "<snake_case>_vector_native_hnsw_idx" naming convention, so a future
+    // third vector-native column's index gets verified too once added here
+    // (previously only clause_embeddings' was checked - the
+    // contract_document_chunk_embeddings one added in
+    // 20260812120741_add_contract_document_chunks had no verification at
+    // all until this).
+    const NATIVE_VECTOR_HNSW_INDEXES = [
+      "clause_embeddings_vector_native_hnsw_idx",
+      "contract_document_chunk_embeddings_vector_native_hnsw_idx",
+    ];
     const indexes = await client.query<{ indexname: string; indexdef: string }>(
-      "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' AND (indexname = $1 OR indexdef ILIKE $2)",
-      ["clause_embeddings_vector_native_hnsw_idx", "%gin_trgm_ops%"]
+      "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' AND (indexname = ANY($1::text[]) OR indexdef ILIKE $2)",
+      [NATIVE_VECTOR_HNSW_INDEXES, "%gin_trgm_ops%"]
     );
-    const hnswIndex = indexes.rows.find((r) => r.indexname === "clause_embeddings_vector_native_hnsw_idx");
-    if (!hnswIndex) {
-      problems.push({ code: "MISSING_HNSW_INDEX", detail: "clause_embeddings_vector_native_hnsw_idx 인덱스가 없습니다" });
-    } else if (!/using hnsw/i.test(hnswIndex.indexdef) || !/vector_cosine_ops/i.test(hnswIndex.indexdef)) {
-      problems.push({
-        code: "WRONG_INDEX_DEFINITION",
-        detail: `HNSW 인덱스는 존재하지만 정의가 예상과 다릅니다: ${hnswIndex.indexdef}`,
-      });
+    for (const indexName of NATIVE_VECTOR_HNSW_INDEXES) {
+      const hnswIndex = indexes.rows.find((r) => r.indexname === indexName);
+      if (!hnswIndex) {
+        problems.push({ code: "MISSING_HNSW_INDEX", detail: `${indexName} 인덱스가 없습니다` });
+      } else if (!/using hnsw/i.test(hnswIndex.indexdef) || !/vector_cosine_ops/i.test(hnswIndex.indexdef)) {
+        problems.push({
+          code: "WRONG_INDEX_DEFINITION",
+          detail: `HNSW 인덱스는 존재하지만 정의가 예상과 다릅니다: ${hnswIndex.indexdef}`,
+        });
+      }
     }
     const trgmIndex = indexes.rows.find((r) => /gin_trgm_ops/i.test(r.indexdef));
     if (!trgmIndex) {
@@ -147,6 +164,7 @@ async function main(): Promise<void> {
     // §4 - 핵심 schema column (pgvector 네이티브 컬럼 + AI provenance 컬럼).
     const coreColumns: Array<{ table: string; column: string }> = [
       { table: "clause_embeddings", column: "vectorNative" },
+      { table: "contract_document_chunk_embeddings", column: "vectorNative" },
       { table: "ai_messages", column: "aiConfigVersion" },
       { table: "ai_messages", column: "aiConfigChecksum" },
       { table: "ai_messages", column: "embeddingVersion" },

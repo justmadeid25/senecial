@@ -40,7 +40,24 @@ env:
 jobs:
   resolve-image:
     name: Resolve image tag to deploy
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    # §Closed Beta CI hygiene - a staging environment does not exist yet
+    # (no STAGING_DATABASE_URL/STAGING_BACKUP_AGE_RECIPIENTS secrets
+    # configured), so every automatic run of this workflow failed at the
+    # `backup` job before touching anything, on every single master push -
+    # indistinguishable in the Actions UI from a real, broken pipeline.
+    # Gated here (not on `backup` itself) so the ENTIRE run shows as
+    # skipped, not a red X, when staging is intentionally not yet enabled -
+    # every downstream job's default `needs:`-based condition already
+    # treats "a needed job was skipped" as "skip me too", so nothing further
+    # below needs its own guard. `vars.STAGING_ENABLED` (a plain repository/
+    # environment Actions *variable*, never a secret) defaults to unset -
+    # this workflow stays a clean skip until an operator deliberately sets
+    # it to "true" once a real staging environment/secrets actually exist.
+    # Manual `workflow_dispatch` is intentionally NOT gated by this flag -
+    # it is already an explicit human action (e.g. to verify staging works
+    # right after configuring it, before flipping the flag on for
+    # automatic runs).
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && vars.STAGING_ENABLED == 'true') }}
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
