@@ -1,5 +1,6 @@
 import { AI_CACHE_TTL_SECONDS } from "@/lib/config/ai-cache";
 import { AiBudgetExceededError } from "@/domain/ai/ai-budget-error";
+import { classifyAiStreamError } from "@/domain/ai/ai-stream-error";
 import { AI_USAGE_OPERATION_TYPES } from "@/domain/ai/ai-usage-operation";
 import { filterCitationsToAnswerUsed } from "@/domain/ai/answer-used-citations";
 import { selectBroadIssueCandidates } from "@/domain/ai/broad-issue-selection";
@@ -43,6 +44,7 @@ import { getAiRuntimeConfiguration } from "@/server/services/ai/get-ai-runtime-c
 import { getEmbeddingProviderForOrganization } from "@/server/services/ai/get-embedding-provider-for-organization";
 import { getLlmProviderForOrganization } from "@/server/services/ai/get-llm-provider-for-organization";
 import { loadOrganizationAiContext } from "@/server/services/ai/load-organization-ai-context";
+import { getLogger } from "@/server/logging";
 import { isFallbackLlmProvider } from "@/server/services/ai/providers/fallback-llm-provider";
 import { recordAiUsageBestEffort } from "@/server/services/ai/record-ai-usage-best-effort";
 
@@ -552,11 +554,22 @@ export async function* askQuestionStreaming(params: {
     let reportedUsage: { inputTokens: number; outputTokens: number } | undefined;
     let servedByProviderName: string | undefined;
     let servedByModelName: string | undefined;
+    // §Production Smoke 2026-09-08 finding - minimal, metadata-only stream
+    // telemetry (never prompt/question/answer/citation content) so a failed
+    // stream's ai_stream.failed log (see the catch below) can say WHERE it
+    // failed without needing to guess from Vercel platform logs after the
+    // fact.
+    let streamStage: "before_open" | "opened" | "receiving" | "completed" = "before_open";
+    let chunksEmitted = 0;
+    let providerRequestId: string | undefined;
 
     try {
       try {
         for await (const event of llm.stream(messages, { requestId: params.requestId })) {
-          if (event.type === "text-delta") {
+          streamStage = streamStage === "before_open" ? "opened" : "receiving";
+          if (event.type === "provider-request-id") {
+            providerRequestId = event.value;
+          } else if (event.type === "text-delta") {
             paragraphBuffer += event.text;
             fullText += event.text;
 
@@ -576,6 +589,7 @@ export async function* askQuestionStreaming(params: {
                 const block = parseAnswerBlock(rawParagraph);
                 assertAnswerBlockGrounded(block, synthesisCitations);
                 groundedFullText += (groundedFullText.length > 0 ? "\n\n" : "") + block.text;
+                chunksEmitted += 1;
                 yield { type: "chunk", text: `${block.text}\n\n` };
               }
               boundary = paragraphBuffer.indexOf("\n\n");
@@ -593,13 +607,42 @@ export async function* askQuestionStreaming(params: {
           const trailingBlock = parseAnswerBlock(trailingRaw);
           assertAnswerBlockGrounded(trailingBlock, synthesisCitations);
           groundedFullText += (groundedFullText.length > 0 ? "\n\n" : "") + trailingBlock.text;
+          chunksEmitted += 1;
           yield { type: "chunk", text: trailingBlock.text };
         }
+        streamStage = "completed";
       } finally {
         activeStreamingKeys.delete(cacheKey);
       }
     } catch (rawError) {
-      const error = normalizeProviderError({ error: rawError, providerName: llm.providerName });
+      // §Production Smoke 2026-09-08 finding - classifyAiStreamError()
+      // replaces the previous blind normalizeProviderError(rawError) call:
+      // that function had no way to recognize the citation-grounding
+      // guard's OWN throws (a bare Error, by design - see
+      // citation-required.ts) as anything other than an unrecognized
+      // exception, so every grounding rejection silently collapsed to
+      // PROVIDER_UNKNOWN - misreporting a correctly-working fail-closed
+      // guard as a mysterious provider outage. classifyAiStreamError()
+      // checks for AiGroundingError FIRST, before ever considering a
+      // provider-shaped classification.
+      const classified = classifyAiStreamError(rawError);
+      const elapsedMs = Math.round(performance.now() - llmStart);
+      // §Observability - safe, metadata-only: no question/prompt/contract
+      // text, no answer text, no citation text, no secrets. Every field is
+      // either a closed-vocabulary code, a class/type name, a boolean, a
+      // count, or a duration.
+      getLogger().warn("ai_stream.failed", {
+        errorCode: classified.errorCode,
+        originalErrorName: classified.originalErrorName,
+        isProviderError: classified.isProviderError,
+        httpStatus: classified.httpStatus,
+        providerRequestId,
+        streamStage,
+        chunksEmitted,
+        elapsedMs,
+        providerName: llm.providerName,
+        requestId: params.requestId,
+      });
       await releaseAiBudget(reservation);
       await recordAiUsageBestEffort({
         organizationId: params.organizationId,
@@ -608,9 +651,9 @@ export async function* askQuestionStreaming(params: {
         operationType: AI_USAGE_OPERATION_TYPES.LLM_ASK_STREAM,
         provider: llm.providerName,
         model: llm.modelName,
-        latencyMs: Math.round(performance.now() - llmStart),
+        latencyMs: elapsedMs,
         success: false,
-        errorCode: error.errorCode,
+        errorCode: classified.errorCode,
         ...(await currentAiConfigIdentity(embeddingSelection.provider)),
       });
       throw rawError;

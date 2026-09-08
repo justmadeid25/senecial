@@ -1,7 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AI_STREAM_ERROR_CODES } from "@/domain/ai/ai-stream-error";
 import type { Citation } from "@/domain/ai/citation";
 import type { AiStreamEvent, LlmCallOptions, LlmCompletionResult, LlmMessage, LlmProvider } from "@/domain/ai/llm-provider";
+import { PROVIDER_ERROR_CODES } from "@/domain/ai/provider-error";
 import { prisma } from "@/server/db/client";
 
 /**
@@ -45,6 +47,15 @@ vi.mock("@/server/services/ai/get-llm-provider-for-organization", () => ({
   getLlmProviderForOrganization: () => ({ provider: fakeLlm, group: "primary" as const }),
 }));
 
+// §Production Smoke 2026-09-08 finding - captures ask-question.ts's new
+// ai_stream.failed structured log so tests can assert BOTH that it fires
+// with the right metadata AND that it never carries prompt/answer/citation
+// content (see the "safe observability" describe block below).
+const loggerWarnSpy = vi.fn();
+vi.mock("@/server/logging", () => ({
+  getLogger: () => ({ info: vi.fn(), warn: loggerWarnSpy, error: vi.fn() }),
+}));
+
 const { askQuestionStreaming } = await import("@/features/ai/server/ask-question");
 
 function buildFakeLlm(streamFn: (messages: LlmMessage[], options?: LlmCallOptions) => AsyncIterable<AiStreamEvent>): LlmProvider {
@@ -75,6 +86,10 @@ beforeAll(async () => {
     data: { name: "Ask-Question Streaming Grounding Test Org", slug: `ask-question-streaming-test-${Date.now()}` },
   });
   organizationId = org.id;
+});
+
+beforeEach(() => {
+  loggerWarnSpy.mockClear();
 });
 
 afterAll(async () => {
@@ -200,5 +215,123 @@ describe("askQuestionStreaming - paragraph buffering + block grounding (§AI 답
     // regression this guards is that iterating to completion or breaking
     // early never throws an unhandled rejection out of the generator.
     expect(events.length).toBeGreaterThan(0);
+  });
+});
+
+async function findLatestFailedUsageRecord() {
+  return prisma.aiUsageRecord.findFirst({
+    where: { organizationId, operationType: "llm_ask_stream", success: false },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
+ * §Production Smoke 2026-09-08 finding - the production incident this
+ * describe block guards against: a citation-grounding rejection (the
+ * fail-closed guard working exactly as designed) was silently recorded as
+ * AiUsageRecord.errorCode="PROVIDER_UNKNOWN", making a correctly-working
+ * application guard indistinguishable from a real OpenAI outage in every
+ * downstream signal (usage records, logs, the user-facing message).
+ */
+describe("askQuestionStreaming - error classification (§Production Smoke 2026-09-08 finding)", () => {
+  it("1/3. a hallucinated citation marker classifies as AI_GROUNDING_FAILED, never PROVIDER_UNKNOWN, in the recorded AiUsageRecord", async () => {
+    fakeLlm = buildFakeLlm(() =>
+      toDeltas(`[결론] 이 계약은 안전합니다. [출처: 가짜조항 - 존재하지않는계약]\n\n`)
+    );
+    const events = await collectEvents();
+    expect(events.at(-1)!.type).toBe("error");
+
+    const usage = await findLatestFailedUsageRecord();
+    expect(usage).not.toBeNull();
+    expect(usage!.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+    expect(usage!.errorCode).not.toBe("PROVIDER_UNKNOWN");
+  });
+
+  it("2/3. an evidence paragraph with no valid citation marker also classifies as AI_GROUNDING_FAILED", async () => {
+    fakeLlm = buildFakeLlm(() => toDeltas(`[근거] 이 조항은 사실이 아닌 내용을 담고 있습니다.\n\n`));
+    const events = await collectEvents();
+    expect(events.at(-1)!.type).toBe("error");
+
+    const usage = await findLatestFailedUsageRecord();
+    expect(usage!.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+  });
+
+  it("6/7/8. partial chunks already yielded stay fail-closed: no 'done' event fires (so route.ts's addMessage() for the ASSISTANT role, which only runs on 'done', can never persist a grounding-rejected answer) and the failed AiUsageRecord is written with success=false/errorCode=AI_GROUNDING_FAILED", async () => {
+    fakeLlm = buildFakeLlm(async function* () {
+      yield { type: "text-delta", text: `[결론] 네, 자동 갱신됩니다.\n\n` };
+      yield { type: "text-delta", text: `[근거] 근거 없는 문장입니다.\n\n` };
+    });
+    const events = await collectEvents();
+
+    const chunkEvents = events.filter((e) => e.type === "chunk");
+    expect(chunkEvents).toHaveLength(1);
+    expect(chunkEvents[0]!.text!.trim()).toBe("네, 자동 갱신됩니다.");
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    expect(events.at(-1)!.type).toBe("error");
+
+    const usage = await findLatestFailedUsageRecord();
+    expect(usage!.success).toBe(false);
+    expect(usage!.operationType).toBe("llm_ask_stream");
+    expect(usage!.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+  });
+
+  it("4. a genuine ProviderError thrown by the LLM provider preserves ITS OWN provider errorCode unchanged, never overwritten by the grounding/internal classifier", async () => {
+    const { ProviderError, PROVIDER_ERROR_CODES: CODES } = await import("@/domain/ai/provider-error");
+    fakeLlm = buildFakeLlm(async function* () {
+      yield { type: "text-delta", text: `[결론] 시작.\n\n` };
+      throw new ProviderError({ errorCode: CODES.PROVIDER_RATE_LIMITED, providerName: "test-fake" });
+    });
+    const events = await collectEvents();
+    expect(events.at(-1)!.type).toBe("error");
+
+    const usage = await findLatestFailedUsageRecord();
+    expect(usage!.errorCode).toBe(PROVIDER_ERROR_CODES.PROVIDER_RATE_LIMITED);
+  });
+
+  it("5. a genuinely unexpected, unwrapped exception (not a ProviderError, not our grounding guard) classifies as AI_INTERNAL_ERROR - distinct from BOTH a provider code and AI_GROUNDING_FAILED", async () => {
+    fakeLlm = buildFakeLlm(async function* () {
+      yield { type: "text-delta", text: `[결론] 시작.\n\n` };
+      // Deliberately a raw, unwrapped bug - e.g. a TypeError from an
+      // unrelated coding mistake - never something a real LlmProvider
+      // implementation would let escape (see openai-responses-llm-provider.ts's
+      // own catch-all), but exactly the shape classifyAiStreamError()
+      // must still handle safely without misreporting it as either a
+      // provider failure or a grounding rejection.
+      throw new TypeError("unexpected null access - simulated application bug, unrelated to the provider or grounding");
+    });
+    const events = await collectEvents();
+    expect(events.at(-1)!.type).toBe("error");
+
+    const usage = await findLatestFailedUsageRecord();
+    expect(usage!.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_INTERNAL_ERROR);
+    expect(usage!.errorCode).not.toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+    expect(usage!.errorCode).not.toBe("PROVIDER_UNKNOWN");
+  });
+
+  it("9/10. the safe structured ai_stream.failed log carries only metadata (codes/booleans/counts/durations) and never the generated answer or citation text", async () => {
+    const secretText = "이 조항은 사실이 아닌 내용을 담고 있습니다 - 민감한-정답-텍스트-마커";
+    fakeLlm = buildFakeLlm(() => toDeltas(`[근거] ${secretText}\n\n`));
+    await collectEvents();
+
+    const failedCalls = loggerWarnSpy.mock.calls.filter(([event]) => event === "ai_stream.failed");
+    expect(failedCalls.length).toBeGreaterThan(0);
+    const [, payload] = failedCalls.at(-1)!;
+
+    // Only safe, flat metadata fields - matches SafeLogData's own
+    // "no nested objects" contract (domain/logging/logger.ts).
+    expect(payload).toMatchObject({
+      errorCode: AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED,
+      isProviderError: false,
+      streamStage: expect.any(String),
+      chunksEmitted: expect.any(Number),
+      elapsedMs: expect.any(Number),
+      providerName: "test-fake",
+    });
+    expect(typeof payload.originalErrorName).toBe("string");
+
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain(secretText);
+    expect(serialized).not.toContain("근거");
+    expect(serialized.length).toBeLessThan(500);
   });
 });

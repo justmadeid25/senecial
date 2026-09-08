@@ -1,3 +1,4 @@
+import { AiGroundingError } from "./ai-stream-error";
 import type { Citation } from "./citation";
 import { findCitationMarkers } from "./citation-marker";
 
@@ -37,7 +38,7 @@ export const CITATION_VALIDATOR_VERSION = "v2";
  */
 export function assertEveryParagraphHasCitation(answerText: string, citations: readonly Citation[]): void {
   if (citations.length === 0) {
-    throw new Error(
+    throw new AiGroundingError(
       "citation 없이는 답변을 검증할 수 없습니다 - 근거가 없으면 이 함수 이전에 hallucination guard가 처리해야 합니다."
     );
   }
@@ -48,7 +49,7 @@ export function assertEveryParagraphHasCitation(answerText: string, citations: r
     .filter((paragraph) => paragraph.length > 0);
 
   if (paragraphs.length === 0) {
-    throw new Error("빈 답변은 출력할 수 없습니다.");
+    throw new AiGroundingError("빈 답변은 출력할 수 없습니다.");
   }
 
   for (const paragraph of paragraphs) {
@@ -59,7 +60,7 @@ export function assertEveryParagraphHasCitation(answerText: string, citations: r
       )
     );
     if (!hasValidMarker) {
-      throw new Error(`citation 표시가 없는 문단이 있어 출력을 거부합니다: "${paragraph.slice(0, 80)}"`);
+      throw new AiGroundingError(`citation 표시가 없는 문단이 있어 출력을 거부합니다: "${paragraph.slice(0, 80)}"`);
     }
   }
 }
@@ -135,10 +136,10 @@ export function assertAnswerBlockGrounded(block: ParsedAnswerBlock, citations: r
   );
   const hasHallucinatedMarker = markers.length > validMarkers.length;
   if (hasHallucinatedMarker) {
-    throw new Error(`citation 표시가 실제 제공된 근거와 일치하지 않아 출력을 거부합니다: "${block.text.slice(0, 80)}"`);
+    throw new AiGroundingError(`citation 표시가 실제 제공된 근거와 일치하지 않아 출력을 거부합니다: "${block.text.slice(0, 80)}"`);
   }
   if (block.type === "evidence" && validMarkers.length === 0) {
-    throw new Error(`citation 표시가 없는 근거 문단이 있어 출력을 거부합니다: "${block.text.slice(0, 80)}"`);
+    throw new AiGroundingError(`citation 표시가 없는 근거 문단이 있어 출력을 거부합니다: "${block.text.slice(0, 80)}"`);
   }
 }
 
@@ -154,7 +155,7 @@ export function assertAnswerBlockGrounded(block: ParsedAnswerBlock, citations: r
  */
 export function assertAnswerGrounded(answerText: string, citations: readonly Citation[]): string {
   if (citations.length === 0) {
-    throw new Error(
+    throw new AiGroundingError(
       "citation 없이는 답변을 검증할 수 없습니다 - 근거가 없으면 이 함수 이전에 hallucination guard가 처리해야 합니다."
     );
   }
@@ -165,7 +166,7 @@ export function assertAnswerGrounded(answerText: string, citations: readonly Cit
     .filter((paragraph) => paragraph.length > 0);
 
   if (paragraphs.length === 0) {
-    throw new Error("빈 답변은 출력할 수 없습니다.");
+    throw new AiGroundingError("빈 답변은 출력할 수 없습니다.");
   }
 
   const strippedParagraphs: string[] = [];

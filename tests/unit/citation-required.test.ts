@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { AiGroundingError } from "@/domain/ai/ai-stream-error";
 import type { ClauseCitation } from "@/domain/ai/citation";
 import {
   ANSWER_BLOCK_TAGS,
@@ -147,6 +148,31 @@ describe("assertAnswerBlockGrounded / assertAnswerGrounded (§AI 답변 품질 �
   it("assertEveryParagraphHasCitation (the OLD strict function, used by generate-ai-clause-review.ts/evaluation) is completely unaffected by the new tagged format - it still requires every paragraph to carry its own marker, tags or not", () => {
     const taggedButUnmarkedConclusion = `${ANSWER_BLOCK_TAGS.conclusion} 결론 문단인데 근거 표시가 없습니다.`;
     expect(() => assertEveryParagraphHasCitation(taggedButUnmarkedConclusion, [citation])).toThrow();
+  });
+
+  it("§Production Smoke 2026-09-08 finding - every grounding rejection throws the typed AiGroundingError, never a bare Error, so it can never be misclassified as a provider failure downstream (see ask-question.ts's classifyAiStreamError())", () => {
+    const forgedMarker = "[출처: 가짜조항 - 존재하지않는계약]";
+
+    try {
+      assertAnswerBlockGrounded(parseAnswerBlock(`${ANSWER_BLOCK_TAGS.evidence} 사실이 아닙니다. ${forgedMarker}`), [citation]);
+      throw new Error("expected assertAnswerBlockGrounded to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiGroundingError);
+    }
+
+    try {
+      assertAnswerGrounded("근거 표시가 없는 문단입니다.", [citation]);
+      throw new Error("expected assertAnswerGrounded to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiGroundingError);
+    }
+
+    try {
+      assertEveryParagraphHasCitation("근거 표시가 없는 문단입니다.", [citation]);
+      throw new Error("expected assertEveryParagraphHasCitation to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiGroundingError);
+    }
   });
 });
 

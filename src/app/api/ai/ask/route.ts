@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AiBudgetExceededError } from "@/domain/ai/ai-budget-error";
+import { AI_STREAM_ERROR_CODES, AiGroundingError, safeAiStreamErrorMessage } from "@/domain/ai/ai-stream-error";
 import { selectRecentConversationHistory } from "@/domain/ai/conversation-context";
 import { AiDisabledError, ExternalAiProcessingDisabledError } from "@/domain/ai/external-ai-policy";
 import { resolveRequestId } from "@/domain/logging/request-id";
@@ -249,13 +250,26 @@ export async function POST(request: Request) {
             // uncited answer) and never persist an ASSISTANT message for
             // it - the user's own question message above is untouched.
             // §Phase 13 Part H (§40) - budget/policy rejections get their
-            // OWN safe, specific message (never provider internals); every
-            // other failure (citation, provider error) stays the generic
-            // message so nothing provider-shaped ever reaches the client.
+            // OWN safe, specific message (never provider internals).
+            // §Production Smoke 2026-09-08 finding - a citation-grounding
+            // rejection (AiGroundingError, thrown by citation-required.ts,
+            // propagated unchanged through askQuestionStreaming's own
+            // `throw rawError`) ALSO gets its own safe, fixed message -
+            // never AiGroundingError's own `.message` (which may echo a
+            // short snippet of generated answer/citation text, never
+            // sent to the client) and never the generic provider-outage
+            // wording, so a user is never told "다시 시도해 주세요" as if this
+            // were a transient provider problem when the fail-closed
+            // grounding guard is actually working as designed. Every
+            // OTHER failure (a genuine provider error, or anything
+            // unrecognized) stays the generic message so nothing
+            // provider-internal ever reaches the client.
             const message =
               error instanceof AiBudgetExceededError || error instanceof AiDisabledError || error instanceof ExternalAiProcessingDisabledError
                 ? error.message
-                : "답변을 생성하지 못했습니다. 다시 시도해 주세요.";
+                : error instanceof AiGroundingError
+                  ? safeAiStreamErrorMessage(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED)
+                  : "답변을 생성하지 못했습니다. 다시 시도해 주세요.";
             enqueueEvent({ type: "error", message });
           } finally {
             await releaseAiConcurrencySlots(concurrencySlots);
