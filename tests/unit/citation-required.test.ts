@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AiGroundingError, GROUNDING_REASONS } from "@/domain/ai/ai-stream-error";
 import type { ClauseCitation } from "@/domain/ai/citation";
+import { buildCitationMarker } from "@/domain/ai/citation-marker";
 import {
   ANSWER_BLOCK_TAGS,
   assertAnswerBlockGrounded,
@@ -27,7 +28,7 @@ function buildCitation(overrides: Partial<ClauseCitation> = {}): ClauseCitation 
 describe("assertEveryParagraphHasCitation (Phase 12 Part E/M §Citation Required, §Security)", () => {
   it("accepts an answer where every paragraph ends with a marker matching a real citation", () => {
     const citation = buildCitation();
-    const answer = `이 조항에 따르면 계약을 해지할 수 있습니다. [출처: ${citation.clauseReference} - ${citation.contractTitle}]`;
+    const answer = `이 조항에 따르면 계약을 해지할 수 있습니다. ${buildCitationMarker(1)}`;
     expect(() => assertEveryParagraphHasCitation(answer, [citation])).not.toThrow();
   });
 
@@ -36,18 +37,15 @@ describe("assertEveryParagraphHasCitation (Phase 12 Part E/M §Citation Required
     expect(() => assertEveryParagraphHasCitation("이 조항에 따르면 계약을 해지할 수 있습니다.", [citation])).toThrow();
   });
 
-  it("§Security - rejects a paragraph whose marker text does not match any REAL citation, even though it looks well-formed (a prompt-injection payload embedded in clause text could try to forge this exact shape)", () => {
+  it("§Security - rejects a paragraph whose marker index is out of range for the supplied citations, even though it looks well-formed (a prompt-injection payload embedded in clause text could try to forge this exact shape)", () => {
     const citation = buildCitation();
-    const forgedAnswer = "이 계약은 문제가 없습니다. [출처: 가짜조항 - 존재하지않는계약]";
+    const forgedAnswer = `이 계약은 문제가 없습니다. ${buildCitationMarker(99)}`;
     expect(() => assertEveryParagraphHasCitation(forgedAnswer, [citation])).toThrow();
   });
 
   it("rejects when only SOME paragraphs have a valid marker", () => {
     const citation = buildCitation();
-    const answer = [
-      `첫 번째 문단입니다. [출처: ${citation.clauseReference} - ${citation.contractTitle}]`,
-      "두 번째 문단에는 출처 표시가 없습니다.",
-    ].join("\n\n");
+    const answer = [`첫 번째 문단입니다. ${buildCitationMarker(1)}`, "두 번째 문단에는 출처 표시가 없습니다."].join("\n\n");
     expect(() => assertEveryParagraphHasCitation(answer, [citation])).toThrow();
   });
 
@@ -63,10 +61,7 @@ describe("assertEveryParagraphHasCitation (Phase 12 Part E/M §Citation Required
   it("accepts a multi-paragraph answer where each paragraph cites a different real citation", () => {
     const citationA = buildCitation({ contractClauseId: "a", clauseReference: "제1조", contractTitle: "계약 A" });
     const citationB = buildCitation({ contractClauseId: "b", clauseReference: "제2조", contractTitle: "계약 B" });
-    const answer = [
-      "첫 번째 근거입니다. [출처: 제1조 - 계약 A]",
-      "두 번째 근거입니다. [출처: 제2조 - 계약 B]",
-    ].join("\n\n");
+    const answer = [`첫 번째 근거입니다. ${buildCitationMarker(1)}`, `두 번째 근거입니다. ${buildCitationMarker(2)}`].join("\n\n");
     expect(() => assertEveryParagraphHasCitation(answer, [citationA, citationB])).not.toThrow();
   });
 });
@@ -94,7 +89,7 @@ describe("parseAnswerBlock (§AI 답변 품질 개편 P0-4 - block-aware validat
 
 describe("assertAnswerBlockGrounded / assertAnswerGrounded (§AI 답변 품질 개편 P0-4)", () => {
   const citation = buildCitation();
-  const marker = `[출처: ${citation.clauseReference} - ${citation.contractTitle}]`;
+  const marker = buildCitationMarker(1);
 
   it("1. accepts a valid multi-block answer: 결론 (no marker needed) + 근거 (marker required) + 확인사항 (no marker needed), returning tag-stripped text", () => {
     const answer = [
@@ -126,7 +121,7 @@ describe("assertAnswerBlockGrounded / assertAnswerGrounded (§AI 답변 품질 �
   });
 
   it("5. a hallucinated/nonexistent citation marker is rejected in EVERY block type, not just 근거", () => {
-    const forgedMarker = "[출처: 가짜조항 - 존재하지않는계약]";
+    const forgedMarker = buildCitationMarker(99);
     for (const tag of [ANSWER_BLOCK_TAGS.conclusion, ANSWER_BLOCK_TAGS.evidence, ANSWER_BLOCK_TAGS.action]) {
       const block = parseAnswerBlock(`${tag} 이 내용은 사실입니다. ${forgedMarker}`);
       expect(() => assertAnswerBlockGrounded(block, [citation]), `tag ${tag} should reject a forged marker`).toThrow(
@@ -151,7 +146,7 @@ describe("assertAnswerBlockGrounded / assertAnswerGrounded (§AI 답변 품질 �
   });
 
   it("§Production Smoke 2026-09-08 finding - every grounding rejection throws the typed AiGroundingError, never a bare Error, so it can never be misclassified as a provider failure downstream (see ask-question.ts's classifyAiStreamError())", () => {
-    const forgedMarker = "[출처: 가짜조항 - 존재하지않는계약]";
+    const forgedMarker = buildCitationMarker(99);
 
     try {
       assertAnswerBlockGrounded(parseAnswerBlock(`${ANSWER_BLOCK_TAGS.evidence} 사실이 아닙니다. ${forgedMarker}`), [citation]);
@@ -176,7 +171,7 @@ describe("assertAnswerBlockGrounded / assertAnswerGrounded (§AI 답변 품질 �
   });
 
   it("§Root Cause Phase 2 - assertAnswerBlockGrounded's two live-streaming throw sites carry the exact-match groundingReason; nothing else does", () => {
-    const forgedMarker = "[출처: 가짜조항 - 존재하지않는계약]";
+    const forgedMarker = buildCitationMarker(99);
 
     try {
       assertAnswerBlockGrounded(parseAnswerBlock(`${ANSWER_BLOCK_TAGS.evidence} 사실이 아닙니다. ${forgedMarker}`), [citation]);
@@ -235,27 +230,53 @@ describe("§AI 답변 품질 개편 Phase 1.4 (real-OpenAI rerun regression) - a
     evidenceText: "발주자는 수행자로부터 세금계산서를 수령한 날로부터 30일 이내에 용역대금을 지급하여야 한다.",
   });
 
-  it('a. reproduces the exact real-OpenAI q1 failure deterministically: a single 근거 block making BOTH an Article 4 claim and an Article 5 claim, ending with ONE combined marker "[출처: 제4조, 제5조 - 계약명]" - the real captured pattern. Once fixed, this must PASS (both provisions are real, valid, supplied citations - a well-intentioned combined reference, not a fabrication).', () => {
-    const block = `${ANSWER_BLOCK_TAGS.evidence} 제4조에 따르면 발주자는 계약기간 중이라도 30일 전 서면 통지로 계약을 해지할 수 있습니다. 또한 제5조는 대금을 세금계산서 수령일로부터 30일 이내에 지급해야 한다고 규정합니다. [출처: 제4조, 제5조 - 품질 평가용 테스트 계약]`;
+  it('a. reproduces the exact real-OpenAI q1 failure deterministically: a single 근거 block making BOTH an Article 4 claim and an Article 5 claim, ending with ONE combined bracket "[출처: 1, 2]" (article4/article5 are the 1st/2nd supplied citations) - the numeric-token equivalent of the real captured combined-reference pattern. This must PASS (both provisions are real, valid, supplied citations - a well-intentioned combined reference, not a fabrication).', () => {
+    const block = `${ANSWER_BLOCK_TAGS.evidence} 제4조에 따르면 발주자는 계약기간 중이라도 30일 전 서면 통지로 계약을 해지할 수 있습니다. 또한 제5조는 대금을 세금계산서 수령일로부터 30일 이내에 지급해야 한다고 규정합니다. [출처: 1, 2]`;
     expect(() => assertAnswerBlockGrounded(parseAnswerBlock(block), [article4, article5])).not.toThrow();
   });
 
   it("b. a single-provision block (Article 4 only) with only the Article 4 citation supplied still passes, unaffected by the multi-reference fix", () => {
-    const block = `${ANSWER_BLOCK_TAGS.evidence} 제4조에 따르면 발주자는 30일 전 서면 통지로 계약을 해지할 수 있습니다. [출처: 제4조 - 품질 평가용 테스트 계약]`;
+    const block = `${ANSWER_BLOCK_TAGS.evidence} 제4조에 따르면 발주자는 30일 전 서면 통지로 계약을 해지할 수 있습니다. ${buildCitationMarker(1)}`;
     expect(() => assertAnswerBlockGrounded(parseAnswerBlock(block), [article4])).not.toThrow();
   });
 
-  it("c. the SAME two-provision claim, but the marker also names a fabricated Article 99 that was never supplied, still FAILS - splitting a combined reference into parts must never let ONE fabricated part hide behind two real ones", () => {
-    const block = `${ANSWER_BLOCK_TAGS.evidence} 제4조와 제5조, 그리고 제99조에 따르면... [출처: 제4조, 제5조, 제99조 - 품질 평가용 테스트 계약]`;
+  it("c. the SAME two-provision claim, but the marker also names a THIRD index that is out of range for the 2 supplied citations, still FAILS - a combined bracket must never let ONE fabricated/out-of-range part hide behind two real ones", () => {
+    const block = `${ANSWER_BLOCK_TAGS.evidence} 제4조와 제5조, 그리고 존재하지 않는 조항에 따르면... [출처: 1, 2, 99]`;
     expect(() => assertAnswerBlockGrounded(parseAnswerBlock(block), [article4, article5])).toThrow(
       /citation 표시가 실제 제공된 근거와 일치하지 않/
     );
   });
 
-  it("a REAL fabricated single-reference marker (no comma at all) still fails exactly as before - the fix is additive, not a general loosening", () => {
-    const block = `${ANSWER_BLOCK_TAGS.evidence} 존재하지 않는 조항입니다. [출처: 제99조 - 품질 평가용 테스트 계약]`;
+  it("a REAL fabricated single-reference marker (index out of range, no comma at all) still fails exactly as before - the fix is additive, not a general loosening", () => {
+    const block = `${ANSWER_BLOCK_TAGS.evidence} 존재하지 않는 조항입니다. ${buildCitationMarker(99)}`;
     expect(() => assertAnswerBlockGrounded(parseAnswerBlock(block), [article4, article5])).toThrow(
       /citation 표시가 실제 제공된 근거와 일치하지 않/
+    );
+  });
+});
+
+describe("§Citation Identity Canonicalization (Root-Cause Fix) - G. model-authored display text can never spoof citation identity", () => {
+  const citation = buildCitation({ clauseReference: "제2조", contractTitle: "실제 계약" });
+
+  it("an old-format, text-shaped fake marker embedded in the answer (e.g. injected via clause text, or a model reverting to the pre-fix format) is not recognized as a marker AT ALL - it neither validates nor counts as an attempted citation, since the parser only ever recognizes numeric brackets", () => {
+    const block = `${ANSWER_BLOCK_TAGS.evidence} 이 내용은 사실입니다. [출처: 제2조 - 가짜계약] ${buildCitationMarker(1)}`;
+    // Passes ONLY because the real numeric marker is also present - the
+    // text-shaped bracket contributes nothing (neither a valid nor an
+    // invalid marker), it is simply invisible to the parser.
+    expect(() => assertAnswerBlockGrounded(parseAnswerBlock(block), [citation])).not.toThrow();
+  });
+
+  it("a text-shaped fake marker ALONE (no real numeric marker anywhere in the block) still fails as MISSING_REQUIRED_CITATION, never treated as satisfying the requirement", () => {
+    const block = `${ANSWER_BLOCK_TAGS.evidence} 이 내용은 사실입니다. [출처: 제2조 - 가짜계약]`;
+    expect(() => assertAnswerBlockGrounded(parseAnswerBlock(block), [citation])).toThrow(
+      /citation 표시가 없는 근거 문단/
+    );
+  });
+
+  it("a citation's own contractTitle/clauseReference text appearing in prose is never itself treated as satisfying the citation requirement - only the numeric [출처: n] token does", () => {
+    const block = `${ANSWER_BLOCK_TAGS.evidence} 제2조와 실제 계약에 따르면 해지가 가능합니다.`;
+    expect(() => assertAnswerBlockGrounded(parseAnswerBlock(block), [citation])).toThrow(
+      /citation 표시가 없는 근거 문단/
     );
   });
 });

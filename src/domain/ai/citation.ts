@@ -9,14 +9,19 @@
  * §Phase 14.1 §10 - now a tagged union over `evidenceType`: "clause"
  * (ContractClause - the pre-existing structured evidence layer) or
  * "chunk" (ContractDocumentChunk - the new raw-document evidence layer).
- * The `[출처: {clauseReference} - {contractTitle}]` marker mechanism
- * (citation-marker.ts) matches purely on those two TEXT fields, never on
- * contractClauseId/chunkId - so citation-required.ts's validation and the
- * prompt-builder's marker format needed ZERO changes to support the new
- * evidence type; only this type, context-builder.ts (a new
- * buildChunkContext() alongside the existing buildContext()), and
- * persistence (ai-conversation-repository.ts / MessageCitation's new
- * nullable chunkId column) changed.
+ *
+ * §Citation Identity Canonicalization (Root-Cause Fix) - the
+ * `[출처: n]` marker mechanism (citation-marker.ts) matches on a closed-set
+ * 1-based INDEX into the citations array supplied for a given request,
+ * never on clauseReference/contractTitle text (the two legs can legitimately
+ * spell the same provision differently - e.g. clause leg "제2조" vs. chunk
+ * leg "제2조(해지)" - which is exactly what made text-based identity
+ * unstable) and never directly on contractClauseId/chunkId either (those
+ * remain the STABLE persisted identity - see MessageCitation - but the
+ * per-request prompt/validator token is the array index, which needs no
+ * schema of its own). `clauseReference`/`contractTitle` remain trusted,
+ * server-authored DISPLAY metadata only - never authoritative for
+ * validation, and never something client/model-authored text can overwrite.
  */
 export interface ClauseCitation {
   evidenceType: "clause";

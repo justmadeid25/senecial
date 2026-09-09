@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { AI_STREAM_ERROR_CODES, GROUNDING_REASONS } from "@/domain/ai/ai-stream-error";
 import type { Citation } from "@/domain/ai/citation";
+import { buildCitationMarker } from "@/domain/ai/citation-marker";
 import type { AiStreamEvent, LlmCallOptions, LlmCompletionResult, LlmMessage, LlmProvider } from "@/domain/ai/llm-provider";
 import { PROVIDER_ERROR_CODES } from "@/domain/ai/provider-error";
 import { prisma } from "@/server/db/client";
@@ -35,7 +36,13 @@ const CITATION: Citation = {
   evidenceText: "계약기간 종료 후 자동 갱신되며, 종료 30일 전까지 통지해야 한다.",
   score: 0.9,
 };
-const MARKER = `[출처: ${CITATION.clauseReference} - ${CITATION.contractTitle}]`;
+// retrieveContext() is mocked below to return exactly [CITATION], so its
+// server-issued token (see citation-marker.ts) is always index 1.
+const MARKER = buildCitationMarker(1);
+// An out-of-range index for the 1-citation supplied set - the closed-set
+// numeric-token equivalent of the old "가짜조항 - 존재하지않는계약" forged
+// text marker.
+const UNKNOWN_MARKER = buildCitationMarker(99);
 
 vi.mock("@/features/ai/server/retrieve-context", () => ({
   retrieveContext: vi.fn(async () => [CITATION]),
@@ -161,7 +168,7 @@ describe("askQuestionStreaming - paragraph buffering + block grounding (§AI 답
 
   it("a hallucinated citation marker mid-stream aborts before that block is ever exposed to the client", async () => {
     fakeLlm = buildFakeLlm(() =>
-      toDeltas(`[결론] 이 계약은 안전합니다. [출처: 가짜조항 - 존재하지않는계약]\n\n`)
+      toDeltas(`[결론] 이 계약은 안전합니다. ${UNKNOWN_MARKER}\n\n`)
     );
     const events = await collectEvents();
     expect(events.filter((e) => e.type === "chunk")).toHaveLength(0);
@@ -236,7 +243,7 @@ async function findLatestFailedUsageRecord() {
 describe("askQuestionStreaming - error classification (§Production Smoke 2026-09-08 finding)", () => {
   it("1/3. a hallucinated citation marker classifies as AI_GROUNDING_FAILED, never PROVIDER_UNKNOWN, in the recorded AiUsageRecord", async () => {
     fakeLlm = buildFakeLlm(() =>
-      toDeltas(`[결론] 이 계약은 안전합니다. [출처: 가짜조항 - 존재하지않는계약]\n\n`)
+      toDeltas(`[결론] 이 계약은 안전합니다. ${UNKNOWN_MARKER}\n\n`)
     );
     const events = await collectEvents();
     expect(events.at(-1)!.type).toBe("error");
@@ -278,10 +285,10 @@ describe("askQuestionStreaming - error classification (§Production Smoke 2026-0
   it("A. a valid first block, then a SECOND block with a marker matching no supplied citation, classifies as groundingReason=UNKNOWN_CITATION_MARKER (§Root Cause Phase 2)", async () => {
     fakeLlm = buildFakeLlm(async function* () {
       yield { type: "text-delta", text: `[결론] 네, 자동 갱신됩니다.\n\n` };
-      // A syntactically valid marker whose (clauseReference, contractTitle)
-      // pair matches NEITHER of CITATION's - a hallucinated/unknown
-      // reference, not an absent one.
-      yield { type: "text-delta", text: `[근거] 이 조항은 다른 내용입니다. [출처: 제99조 - 존재하지않는계약]\n\n` };
+      // A syntactically valid marker whose index is out of range for the
+      // 1-citation supplied set - a hallucinated/unknown reference, not an
+      // absent one.
+      yield { type: "text-delta", text: `[근거] 이 조항은 다른 내용입니다. ${UNKNOWN_MARKER}\n\n` };
     });
     const events = await collectEvents();
 
@@ -302,9 +309,12 @@ describe("askQuestionStreaming - error classification (§Production Smoke 2026-0
       groundingReason: GROUNDING_REASONS.UNKNOWN_CITATION_MARKER,
       chunksEmitted: 1,
     });
+    // The safe log payload must never leak the real citation's own display
+    // text either - only closed-vocabulary codes/counts (see the dedicated
+    // "9/10." safe-log test below for the fuller assertion).
     const serialized = JSON.stringify(payload);
-    expect(serialized).not.toContain("존재하지않는계약");
-    expect(serialized).not.toContain("제99조");
+    expect(serialized).not.toContain(CITATION.contractTitle);
+    expect(serialized).not.toContain(CITATION.clauseReference);
   });
 
   it("B. a valid first block, then a SECOND evidence block with NO citation marker at all, classifies as groundingReason=MISSING_REQUIRED_CITATION (§Root Cause Phase 2)", async () => {

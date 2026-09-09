@@ -12,7 +12,7 @@
 
 - **Embedding**: `ClauseEmbedding` (조항당 1개의 `isLatest=true` 행). `vector`(Float[], 항상 채워짐, fallback)와 `vectorNative`(`vector(256)`, pgvector 네이티브 컬럼, dimension이 일치하는 행만) 두 컬럼을 **동시에** 씁니다(dual-write) - `createLatestClauseEmbedding()` 참고.
 - **Hybrid Search**: ILIKE 키워드 leg + 벡터 leg(가중치 0.6/0.4, `hybrid-search-scoring.ts`의 `SEARCH_WEIGHT_VERSION`으로 캐시 무효화) → 병합 → 정확 문구 일치 보너스.
-- **RAG**: 검색 결과 → Citation(조항 번호/계약명/근거 문장, 500자 상한) → Hallucination Guard(근거 점수 미달 시 LLM 호출 전에 고정 문구로 차단) → Prompt Builder(시스템 프롬프트 비공개) → LLM → Citation Required(모든 문단에 `[출처: ...]` 필수, 위반 시 출력 거부).
+- **RAG**: 검색 결과 → 동일 조항(clause leg + chunk leg) 중복 제거(`citation-provision.ts`, contractId+조항번호 기준) → Citation(조항 번호/계약명/근거 문장, 500자 상한) → Hallucination Guard(근거 점수 미달 시 LLM 호출 전에 고정 문구로 차단) → Prompt Builder(시스템 프롬프트 비공개) → LLM → Citation Required(모든 문단에 `[출처: n]` 필수 - n은 [CITATION n] 블록 번호를 그대로 복사한 서버 발급 토큰이며, 조항/계약명 텍스트가 아닙니다. 유효하지 않은 n 또는 표시 누락 시 출력 거부).
 
 ## Vector Search Provider
 

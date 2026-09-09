@@ -15,8 +15,15 @@ import { findCitationMarkers } from "./citation-marker";
  * markers (see that module's splitCombinedReference()) - a real change to
  * what "matches a real citation" means, even though nothing in THIS file
  * changed.
+ *
+ * §Citation Identity Canonicalization (Root-Cause Fix) - v3 reflects
+ * citation-marker.ts's marker format changing from TEXT (clauseReference +
+ * contractTitle equality) to a closed-set 1-based INDEX into the supplied
+ * `citations` array (see that module's own docstring for the full
+ * rationale). "matches a real citation" is now "is an integer in
+ * [1, citations.length]", never a text comparison.
  */
-export const CITATION_VALIDATOR_VERSION = "v2";
+export const CITATION_VALIDATOR_VERSION = "v3";
 
 /**
  * §Citation Required - "모든 문단 citation 없으면 출력 거부". Called on the
@@ -54,11 +61,7 @@ export function assertEveryParagraphHasCitation(answerText: string, citations: r
 
   for (const paragraph of paragraphs) {
     const markers = findCitationMarkers(paragraph);
-    const hasValidMarker = markers.some((marker) =>
-      citations.some(
-        (citation) => citation.clauseReference === marker.clauseReference && citation.contractTitle === marker.contractTitle
-      )
-    );
+    const hasValidMarker = markers.some((marker) => marker.index >= 1 && marker.index <= citations.length);
     if (!hasValidMarker) {
       throw new AiGroundingError(`citation 표시가 없는 문단이 있어 출력을 거부합니다: "${paragraph.slice(0, 80)}"`);
     }
@@ -129,11 +132,7 @@ export function parseAnswerBlock(paragraph: string): ParsedAnswerBlock {
  */
 export function assertAnswerBlockGrounded(block: ParsedAnswerBlock, citations: readonly Citation[]): void {
   const markers = findCitationMarkers(block.text);
-  const validMarkers = markers.filter((marker) =>
-    citations.some(
-      (citation) => citation.clauseReference === marker.clauseReference && citation.contractTitle === marker.contractTitle
-    )
-  );
+  const validMarkers = markers.filter((marker) => marker.index >= 1 && marker.index <= citations.length);
   const hasHallucinatedMarker = markers.length > validMarkers.length;
   if (hasHallucinatedMarker) {
     throw new AiGroundingError(

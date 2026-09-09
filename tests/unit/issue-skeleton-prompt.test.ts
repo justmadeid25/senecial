@@ -84,10 +84,10 @@ describe("§AI 답변 품질 개편 Phase 1.4.4 - buildUserPrompt() renders an e
     const terminationLine = prompt.split("\n").find((line) => line.startsWith(`${ANSWER_BLOCK_TAGS.evidence} 이슈 ${terminationGroupIndex}/`));
     expect(terminationLine).toBeDefined();
     for (const c of terminationGroup.citations) {
-      expect(terminationLine).toContain(buildCitationMarker(c));
+      expect(terminationLine).toContain(buildCitationMarker(Q14_CONTEXT.indexOf(c) + 1));
     }
     // auto_renewal's own marker never appears on the termination group's block line.
-    expect(terminationLine).not.toContain(buildCitationMarker(autoRenewalGroup.citations[0]!));
+    expect(terminationLine).not.toContain(buildCitationMarker(Q14_CONTEXT.indexOf(autoRenewalGroup.citations[0]!) + 1));
   });
 
   it("e. selected citations passed to buildUserPrompt() are unchanged by the skeleton - it is purely additive prompt TEXT, never a filter (grounding/citation behavior preserved)", () => {

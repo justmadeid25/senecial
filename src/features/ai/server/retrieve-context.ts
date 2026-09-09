@@ -1,4 +1,5 @@
 import type { Citation } from "@/domain/ai/citation";
+import { deduplicateBySameProvision } from "@/domain/ai/citation-provision";
 import { buildChunkContext, buildContext, deduplicateByNormalizedText } from "@/domain/ai/context-builder";
 import type { ConversationTurn } from "@/domain/ai/conversation-context";
 import type { EmbeddingProvider } from "@/domain/ai/embedding-provider";
@@ -23,14 +24,32 @@ import { hybridSearchDocumentChunks } from "./hybrid-search-document-chunks";
  * independent of clause segmentation ever succeeding (see
  * document-chunker.ts / create-document-chunks-for-extracted-document.ts).
  *
- * Deduplication is applied PER LEG (clause text vs. chunk text each have
- * their own near-duplicate shape - a clause and its raw-text superset
+ * Deduplication is applied PER LEG first (clause text vs. chunk text each
+ * have their own near-duplicate shape - a clause and its raw-text superset
  * chunk are NOT the same "duplicate" the way two copies of the same
- * boilerplate clause are), then the two citation lists are concatenated
- * and sorted by score - never merged/deduped across legs, since a clause
- * citation and a chunk citation covering the same passage are
- * deliberately kept as two independent pieces of evidence (different
- * evidenceType, different provenance) rather than collapsed into one.
+ * boilerplate clause are).
+ *
+ * §Citation Identity Canonicalization (Root-Cause Fix) - the two citation
+ * lists are then ALSO deduplicated ACROSS legs by underlying provision
+ * (deduplicateBySameProvision() - see citation-provision.ts), applied here,
+ * BEFORE the prompt is ever built or citations are numbered. This closes
+ * the production UNKNOWN_CITATION_MARKER root cause: previously a clause
+ * leg citation ("제2조") and a chunk leg citation for the SAME article
+ * ("제2조(해지)") were kept as two independent candidates all the way into
+ * the prompt, so the model could see (and cite) either spelling
+ * interchangeably while the validator's identity was still spelling-based.
+ * Citation identity is no longer spelling-based at all (see
+ * citation-marker.ts), so this dedup is no longer needed to prevent a
+ * marker mismatch - it is kept anyway as a quality/consistency measure
+ * (one citation chip per real provision, no wasted token-budget slot on a
+ * near-duplicate, no arbitrary choice between two numbers for one
+ * provision), using the exact same deterministic key
+ * answer-used-citations.ts already proved safe in production for the
+ * POST-answer case. A clause citation is always preferred over a chunk
+ * citation for the same provision (the more precise, structured layer);
+ * the two legs' underlying evidenceType/provenance distinction is never
+ * itself weakened - only the SAME provision, not merely similar text,
+ * collapses.
  *
  * §Retrieval - 질문 -> Embedding -> Hybrid Search -> Top K -> Deduplicate
  * -> Context Builder. Deliberately returns an EMPTY array rather than
@@ -141,5 +160,5 @@ export async function retrieveContext(params: {
       ),
     );
 
-  return [...clauseCitations, ...chunkCitations, ...familyCitations].sort((a, b) => b.score - a.score);
+  return deduplicateBySameProvision([...clauseCitations, ...chunkCitations, ...familyCitations]);
 }

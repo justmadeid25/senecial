@@ -4,6 +4,8 @@ import { buildCitationMarker } from "@/domain/ai/citation-marker";
 const CITATION_BLOCK_PATTERN = /\[CITATION (\d+)\]\n조항: (.+)\n계약: (.+)\n근거: ([\s\S]+?)\n\[\/CITATION \1\]/g;
 
 interface ParsedCitationBlock {
+  /** The exact [CITATION n] number captured from the prompt - the citation's own server-issued token (see citation-marker.ts) - never re-derived by array position, so this stays correct even if a future caller ever passes an already-partial/reordered block set. */
+  index: number;
   clauseReference: string;
   contractTitle: string;
   evidenceText: string;
@@ -14,6 +16,7 @@ function parseCitationBlocks(userMessageContent: string): ParsedCitationBlock[] 
   const blocks: ParsedCitationBlock[] = [];
   for (const match of userMessageContent.matchAll(CITATION_BLOCK_PATTERN)) {
     blocks.push({
+      index: Number(match[1]),
       clauseReference: match[2]!.trim(),
       contractTitle: match[3]!.trim(),
       evidenceText: match[4]!.trim(),
@@ -68,7 +71,7 @@ export class DeterministicDevelopmentLlmProvider implements LlmProvider {
 
     return citationBlocks
       .map((block) => {
-        const marker = buildCitationMarker(block);
+        const marker = buildCitationMarker(block.index);
         return `${block.contractTitle}의 ${block.clauseReference}에 따르면, "${block.evidenceText}" ${marker}`;
       })
       .join("\n\n");

@@ -112,8 +112,17 @@ import type { QuestionComplexity } from "./question-complexity";
  * focused-question prompt text - `issueGroups` is an entirely optional,
  * additive parameter; every existing caller that never passes it gets the
  * exact same prompt text as v6.
+ *
+ * §Citation Identity Canonicalization (Root-Cause Fix) - v8 changes the
+ * citation TRANSPORT instructions only (the `[출처: 조항 - 계약명]` text
+ * format becomes `[출처: n]`, an index copied from the [CITATION n] block
+ * itself) - a real output-shape change (a real model must emit a different
+ * literal marker string to pass grounding), so this MUST bump: an answer
+ * cached under the old text-marker prompt must never be served as if it
+ * satisfies the new index-marker validator. No other rule, tone, or
+ * synthesis behavior changed.
  */
-export const PROMPT_TEMPLATE_VERSION = "v7";
+export const PROMPT_TEMPLATE_VERSION = "v8";
 
 /**
  * §Prompt Builder - "시스템 프롬프트 / 검색 결과 / 사용자 질문 / 출처 모두
@@ -180,9 +189,8 @@ export function buildSystemPrompt(complexity: QuestionComplexity = "focused"): s
     "",
     "답변 구조 (반드시 이 순서로, 각 문단을 아래 표시로 시작하십시오):",
     `- ${ANSWER_BLOCK_TAGS.conclusion} 결론 문단 - 질문에 대한 직접적인 답을 한두 문장으로. 이 문단은 근거 문단들이 이미 뒷받침하므로 별도의 [출처] 표시가 필요 없습니다.`,
-    `- ${ANSWER_BLOCK_TAGS.evidence} 근거 문단 - 질문에 실제로 답하는 인용된 조항이 무엇을 말하는지 설명. 이 문단은 반드시 그 문단이 근거로 삼은 [CITATION] 블록에 대응하는 "[출처: 조항 - 계약명]" 형식의 표시로 끝나야 합니다. 이 표시가 없는 근거 문단은 출력이 거부됩니다. 질문에 실제로 답하는 근거만 문단으로 작성하고, 나머지 [CITATION] 블록은 사용하지 않아도 됩니다.`,
-    "  한 문단이 서로 다른 두 조항의 내용을 함께 설명한다면(예: 원칙 조항 + 그것을 제한/보완하는 조항), 표시도 각 조항마다 따로 붙이십시오: \"[출처: 제4조 - 계약명] [출처: 제5조 - 계약명]\"처럼 표시를 나란히 두 개 쓰십시오.",
-    '  하나의 대괄호 안에 여러 조항을 쉼표로 나열하지 마십시오 (예: "[출처: 제4조, 제5조 - 계약명]"처럼 쓰지 마십시오) - 각 조항은 반드시 자기 자신의 완전한 "[출처: ... - ...]" 표시를 가져야 합니다.',
+    `- ${ANSWER_BLOCK_TAGS.evidence} 근거 문단 - 질문에 실제로 답하는 인용된 조항이 무엇을 말하는지 설명. 이 문단은 반드시 그 문단이 근거로 삼은 [CITATION n] 블록의 번호 n을 그대로 사용한 "[출처: n]" 형식의 표시로 끝나야 합니다 - 조항 번호나 계약명을 직접 쓰지 말고, 오직 위에 제공된 [CITATION n] 블록의 숫자만 그대로 복사하십시오. 제공되지 않은 번호를 지어내면 출력이 거부됩니다. 이 표시가 없는 근거 문단도 출력이 거부됩니다. 질문에 실제로 답하는 근거만 문단으로 작성하고, 나머지 [CITATION] 블록은 사용하지 않아도 됩니다.`,
+    '  한 문단이 서로 다른 두 조항의 내용을 함께 설명한다면(예: 원칙 조항 + 그것을 제한/보완하는 조항), 표시도 각 조항마다 따로 붙이십시오: "[출처: 2] [출처: 5]"처럼 표시를 나란히 두 개 쓰십시오.',
     `- ${ANSWER_BLOCK_TAGS.action} 확인사항 문단 (새로운 실무 정보가 있을 때만) - 사용자가 실무적으로 무엇을 확인·조치해야 하는지. 이 문단도 [출처] 표시가 필요 없지만, 위 근거 문단에서 이미 제시된 내용만 다루고 새로운 사실을 추가하지 마십시오.`,
     "결론과 확인사항 문단에서는 절대 새로운 사실을 지어내지 마십시오 - 오직 근거 문단이 실제로 담고 있는 내용을 요약하거나 그 실무적 의미를 설명하는 용도로만 사용하십시오.",
   ];
@@ -220,11 +228,27 @@ export function buildCitationBlock(citation: Citation, index: number): string {
  * measured "repeats the same issues three times" failure (opening
  * summary, per-issue paragraphs, closing summary all restating the same
  * content) prose-only guidance did not reliably prevent.
+ *
+ * §Citation Identity Canonicalization (Root-Cause Fix) - `citations` is the
+ * EXACT array buildUserPrompt() numbers into `[CITATION n]` blocks (the same
+ * array the caller will validate the answer against - see ask-question.ts's
+ * `synthesisCitations`). Each group's own markers are resolved by looking up
+ * that SAME citation object's position within `citations` - never a
+ * separately-computed or assumed index - so a group's marker(s) always
+ * match the exact `[CITATION n]` numbers actually shown to the model, even
+ * if a caller's `citations`/`issueGroups` pairing has different relative
+ * ordering (as production's does not, but a caller is not required to
+ * guarantee that itself).
  */
-function buildIssueSkeletonSection(issueGroups: readonly IssueGroup[]): string {
+function buildIssueSkeletonSection(citations: readonly Citation[], issueGroups: readonly IssueGroup[]): string {
+  const indexByCitation = new Map<Citation, number>(citations.map((citation, i) => [citation, i + 1]));
   const count = issueGroups.length;
   const issueBlocks = issueGroups.map((group, i) => {
-    const markers = group.citations.map((c) => buildCitationMarker(c)).join(" ");
+    const markers = group.citations
+      .map((citation) => indexByCitation.get(citation))
+      .filter((index): index is number => index !== undefined)
+      .map((index) => buildCitationMarker(index))
+      .join(" ");
     return `${ANSWER_BLOCK_TAGS.evidence} 이슈 ${i + 1}/${count} - 이 문단에서는 다음 표시만 사용하십시오 (그중 실제로 쓴 것만 남기십시오): ${markers}`;
   });
 
@@ -252,9 +276,9 @@ export function buildUserPrompt(question: string, citations: readonly Citation[]
   const blocks = citations.map((citation, i) => buildCitationBlock(citation, i + 1)).join("\n\n");
   const trailingInstruction =
     issueGroups && issueGroups.length > 0
-      ? buildIssueSkeletonSection(issueGroups)
-      : `시스템 프롬프트의 "답변 구조"를 따르십시오. 각 근거(${ANSWER_BLOCK_TAGS.evidence}) 문단 끝에는 그 문단이 실제로 사용한 근거의 표시를 아래 목록에서 정확한 형식 그대로 붙이십시오 (한 문단이 여러 조항을 함께 설명한다면 해당하는 표시를 각각 따로, 나란히 붙이십시오 - 절대 한 대괄호 안에 합치지 마십시오): ` +
-        citations.map((c) => buildCitationMarker(c)).join(", ");
+      ? buildIssueSkeletonSection(citations, issueGroups)
+      : `시스템 프롬프트의 "답변 구조"를 따르십시오. 각 근거(${ANSWER_BLOCK_TAGS.evidence}) 문단 끝에는 그 문단이 실제로 사용한 [CITATION n] 블록의 번호를 그대로 "[출처: n]" 형식으로 붙이십시오 (한 문단이 여러 조항을 함께 설명한다면 해당하는 표시를 각각 따로, 나란히 붙이십시오): ` +
+        citations.map((_, i) => buildCitationMarker(i + 1)).join(", ");
 
   return [
     "다음은 검색으로 찾은 근거 조항들입니다. 답변은 오직 이 근거만 사용하십시오.",

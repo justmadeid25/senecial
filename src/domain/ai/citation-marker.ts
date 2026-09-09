@@ -1,79 +1,51 @@
-import type { Citation } from "./citation";
-
 /**
- * Phase 12 Part E/F - the one shared marker format every piece of the AI
- * pipeline agrees on: prompt-builder.ts embeds each citation as a
- * parseable block using this same clauseReference/contractTitle pair,
- * the Development LLM provider echoes it back as a `[출처: ...]` marker
- * per paragraph, and citation-required.ts checks for that exact marker
- * shape. A real (non-development) LLM provider is instructed via the
- * system prompt (see prompt-builder.ts) to emit the same marker format,
- * so citation-required.ts's enforcement is provider-agnostic.
+ * §Citation Identity Canonicalization (Root-Cause Fix) - replaces the old
+ * `[출처: {clauseReference} - {contractTitle}]` TEXT-matching marker with a
+ * server-issued, closed-set NUMERIC token: the citation's own 1-based
+ * position in the exact `citations` array supplied to buildUserPrompt() /
+ * buildCitationBlock() for this request (see prompt-builder.ts). The model
+ * never reconstructs display text as identity - it only ever copies a
+ * number it was already shown next to the evidence (`[CITATION n]`), so a
+ * legitimate reformatting of the SAME underlying provision across two
+ * retrieval legs (clause leg "제2조" vs. chunk leg "제2조(해지)" - the
+ * production UNKNOWN_CITATION_MARKER root cause) can no longer desync
+ * identity from what the model is asked to copy back verbatim.
+ *
+ * The token is transient and per-request only - never persisted, never
+ * treated as a stable identifier across requests. Resolving a validated
+ * token back to a real Citation object (and its trusted display metadata)
+ * is the caller's job (see citation-required.ts / answer-used-citations.ts),
+ * always by array-index lookup against the SAME citations array the token
+ * was assigned from - never by re-parsing or trusting any model-authored
+ * text as identity or display.
  */
-export function buildCitationMarker(citation: Pick<Citation, "clauseReference" | "contractTitle">): string {
-  return `[출처: ${citation.clauseReference} - ${citation.contractTitle}]`;
+export function buildCitationMarker(index: number): string {
+  return `[출처: ${index}]`;
 }
 
-const MARKER_PATTERN = /\[출처:\s*([^\]-]+?)\s*-\s*([^\]]+?)\]/g;
+/** One or more digits, optionally comma-separated within a single bracket (e.g. "[출처: 2, 5]") - a defensive allowance for a model that combines two provisions in one bracket instead of two side-by-side markers; each number still resolves/validates independently downstream. Never matches non-numeric content - a bracket containing anything else (stray text, a reconstructed clause reference) is simply not recognized as a marker at all, the same fail-closed "no marker found" outcome as an entirely absent one. */
+const MARKER_PATTERN = /\[출처:\s*([\d,\s]+)\]/g;
 
 export interface ParsedCitationMarker {
-  clauseReference: string;
-  contractTitle: string;
+  /** 1-based position in the citations array this answer was generated against - never a database id, never derived from display text. */
+  index: number;
 }
 
-/**
- * §AI 답변 품질 개편 Phase 1.4 (real-OpenAI rerun regression) - a real
- * model, asked (via prompt-builder.ts's relevance-discipline rule) to
- * explain how one provision qualifies/relates to another IN THE SAME
- * paragraph, sometimes cites both provisions in ONE bracket
- * ("[출처: 제4조, 제5조 - 계약명]") instead of two separate ones
- * ("[출처: 제4조 - 계약명] [출처: 제5조 - 계약명]") - both are legitimate
- * ways to express "this paragraph rests on two real, supplied citations",
- * but MARKER_PATTERN's own capture group treats the former as ONE opaque
- * clauseReference string ("제4조, 제5조") that matches neither citation
- * individually, so citation-required.ts's assertAnswerBlockGrounded()
- * rejected an otherwise fully-grounded answer as if it were a fabrication.
- *
- * splitCombinedReference() is the fix: ONLY when a comma-separated
- * clauseReference has TWO OR MORE pieces that EACH independently look like
- * their own "제N조..." article reference does it get split into separate
- * markers - each still validated independently downstream (a fabricated
- * "제99조" mixed into "제4조, 제99조" still fails, since that specific
- * piece won't match any real citation). Deliberately narrow: a
- * clauseReference that merely CONTAINS a comma without every piece
- * matching this shape (e.g. a hypothetical clause title with a literal
- * comma in it) is left completely untouched, single-piece, exactly as
- * before - this is additive precision, never a general loosening of what
- * counts as a valid marker.
- */
-const ARTICLE_REFERENCE_SHAPE = /^제\s*\d+\s*조/;
-
-function splitCombinedReference(rawReference: string): string[] {
-  if (!rawReference.includes(",")) {
-    return [rawReference];
-  }
-  const pieces = rawReference
+function parseIndexList(raw: string): number[] {
+  return raw
     .split(",")
     .map((piece) => piece.trim())
-    .filter((piece) => piece.length > 0);
-  const everyPieceIsAnArticleReference = pieces.length > 1 && pieces.every((piece) => ARTICLE_REFERENCE_SHAPE.test(piece));
-  return everyPieceIsAnArticleReference ? pieces : [rawReference];
+    .filter((piece) => piece.length > 0)
+    .map((piece) => Number(piece))
+    .filter((n) => Number.isInteger(n) && n > 0);
 }
 
-/**
- * Extracts every `[출처: ... - ...]` marker found in a piece of text (a
- * single paragraph, or a whole answer) - a bracket whose clauseReference
- * combines multiple real "제N조" references (see splitCombinedReference()
- * above) expands into one ParsedCitationMarker PER referenced provision,
- * so a caller validating/filtering by (clauseReference, contractTitle)
- * never has to special-case a combined bracket itself.
- */
+/** Extracts every `[출처: n]` (or comma-combined `[출처: n, m]`) marker found in a piece of text - a single paragraph, or a whole answer. Purely syntactic: does not know or care whether a given index is actually valid for any particular citations array - that closed-set membership check is citation-required.ts's job. */
 export function findCitationMarkers(text: string): ParsedCitationMarker[] {
   const markers: ParsedCitationMarker[] = [];
   for (const match of text.matchAll(MARKER_PATTERN)) {
-    const contractTitle = match[2]!.trim();
-    for (const clauseReference of splitCombinedReference(match[1]!.trim())) {
-      markers.push({ clauseReference, contractTitle });
+    for (const index of parseIndexList(match[1]!)) {
+      markers.push({ index });
     }
   }
   return markers;
