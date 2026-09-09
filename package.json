@@ -119,7 +119,7 @@
     "@auth/core": "0.41.3",
     "@playwright/test": "^1.62.0",
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^20.19.43",
+    "@types/node": "^26.4.1",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
