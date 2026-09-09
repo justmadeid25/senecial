@@ -22,6 +22,58 @@ overrides:
   '@hono/node-server': 2.1.0 # 2.0.5 (originally advertised as patched) was later itself flagged for a separate memory-leak DoS advisory; 2.1.0 is the current latest
   find-my-way: 9.7.0 # 9.6.1 (pnpm audit's advertised minimum patched version) was never actually published; 9.7.0 is the real latest
   valibot: 1.4.2
+  # §Security dependency remediation (release-blocking pnpm audit fix) -
+  # Next.js's own bundled optionalDependency (next>sharp) - GHSA-rgj7-g3m4-5g8c
+  # (libheif vulnerabilities), patched at 0.35.4. next@16.3.3 (the version
+  # this app now requires - see the "next" entry in package.json) still
+  # declares "^0.35.3" for its own sharp dependency, so a plain version
+  # bump of next alone does not pick up the fix; 0.35.4 is within that
+  # same declared range (same-minor patch bump), never a forced
+  # incompatible major.
+  sharp: 0.35.4
+  # mammoth's own xmldom dependency (mammoth>@xmldom/xmldom) - 6 separate
+  # GHSA advisories (element/attribute/PI-target/doctype-name injection
+  # bypassing requireWellFormed, quadratic-time attribute dedup, ReDoS in
+  # the end-tag parser, quadratic-memory consumption, quadratic-time
+  # malformed-input recovery), all patched at 0.8.15. mammoth (both the
+  # currently-installed 1.12.0 and the latest 1.12.2) declares "^0.8.6" for
+  # @xmldom/xmldom - 0.8.15 is within that same-minor range, verified via
+  # tests/unit/docx-text-extractor.test.ts's real mammoth-parsing tests
+  # (Korean DOCX body/table extraction, corrupted-buffer rejection, and the
+  # decompression-bomb regression test that specifically exercises
+  # malformed-input handling) all still passing unchanged.
+  '@xmldom/xmldom': 0.8.15
+  # prisma's own @prisma/config dependency (prisma>@prisma/config>deepmerge-ts)
+  # - GHSA-ggr8-5vv4-36mx (stack exhaustion merging recursive object
+  # graphs), patched at 8.0.0. Even the latest published @prisma/config
+  # (7.10.0 at the time of this fix) still declares an unpatched 7.1.5, so
+  # no prisma version bump alone resolves this - this is a same-package
+  # major bump (7.x -> 8.x) forced via override, verified low-risk: the
+  # only behavioral changes in 8.0.0 are a Map-deep-merge default change
+  # (irrelevant - @prisma/config merges plain config objects, never Map
+  # instances), a bugfix to stop deepmergeInto leak-mutating its input, and
+  # TypeScript-only renames (irrelevant - @prisma/config ships pre-compiled
+  # JS, never consumes deepmerge-ts's types at our build time). `prisma
+  # generate`/`prisma migrate deploy`/`prisma validate` all verified still
+  # working via the full release:verify run after this override. Purely a
+  # devDependency-chain tool (the Prisma CLI's own config loader), never
+  # part of the shipped runtime bundle.
+  deepmerge-ts: 8.0.2
+  # prisma's own bundled MySQL driver (prisma>mysql2), included only for
+  # multi-database CLI support - this app's schema.prisma always uses
+  # provider="postgresql", so mysql2's actual code is never invoked by any
+  # of our own code. Two advisories: GHSA-3f6p-5ww8-9rcr (auth-plugin
+  # downgrade leaking plaintext credentials, patched >=3.22.0) and
+  # GHSA-rgwj-5xj2-c3m3 (unbounded zlib inflate decompression-bomb DoS,
+  # patched >=3.23.1) - 3.24.2 clears both. NOT the current real latest
+  # (3.24.4, published 2026-09-08) - that fails this workspace's own pnpm
+  # supply-chain minimumReleaseAge policy (too recently published,
+  # confirmed via a real `docker build`:
+  # ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION); 3.24.2 (published
+  # 2026-08-24) is safely aged, matching this fix's other override
+  # versions. Even the latest prisma (7.10.0) still pins an unpatched
+  # 3.15.3 - a same-major (3.x) patch-line bump.
+  mysql2: 3.24.2
   # Scoped to the 5.x line only (>=5.0.0 <5.0.9) - minimatch@10.2.5 (via
   # ts-morph/typescript-eslint) already depends on brace-expansion 5.x, so
   # this is a same-major patch bump. A separate, older minimatch@3.1.5
@@ -38,11 +90,15 @@ overrides:
   # it, so this remains a same-major patch bump.
   fast-uri: 3.1.7
   # GHSA-5p4m-2wfm-xmqj (CVE-2026-59870) - quadratic CPU consumption in
-  # !!omap resolution, patched at 4.3.1. Pulled in transitively by
-  # @eslint/eslintrc (eslint chain) and cosmiconfig (via the shadcn CLI) -
-  # both declare a semver range that already permits 4.3.1 on the same
-  # major line, so this is a same-major patch bump, not a major upgrade.
-  js-yaml: 4.3.1
+  # !!omap resolution, originally patched at 4.3.1. Pulled in transitively
+  # by @eslint/eslintrc (eslint chain) and cosmiconfig (via the shadcn
+  # CLI) - both declare a semver range that already permits any 4.x
+  # patch, so this stays a same-major patch bump, not a major upgrade.
+  # §Security dependency remediation - a SECOND advisory,
+  # GHSA-2883-xcg3-v3hh ("maxTotalMergeKeys does not limit CPU use for
+  # empty merge sources"), was later found affecting <4.3.2 - bumped from
+  # 4.3.1 to 4.3.2 (current real latest on the 4.x line) to also cover it.
+  js-yaml: 4.3.2
   # GHSA-2v37-7h3g-55p8 - custom generators can loop indefinitely when
   # size is zero. 3.3.17 (this override's original target) turned out to
   # still be within the affected range - the advisory's fixed range was
