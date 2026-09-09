@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AiGroundingError } from "@/domain/ai/ai-stream-error";
+import { AiGroundingError, GROUNDING_REASONS } from "@/domain/ai/ai-stream-error";
 import type { ClauseCitation } from "@/domain/ai/citation";
 import {
   ANSWER_BLOCK_TAGS,
@@ -172,6 +172,51 @@ describe("assertAnswerBlockGrounded / assertAnswerGrounded (§AI 답변 품질 �
       throw new Error("expected assertEveryParagraphHasCitation to throw");
     } catch (error) {
       expect(error).toBeInstanceOf(AiGroundingError);
+    }
+  });
+
+  it("§Root Cause Phase 2 - assertAnswerBlockGrounded's two live-streaming throw sites carry the exact-match groundingReason; nothing else does", () => {
+    const forgedMarker = "[출처: 가짜조항 - 존재하지않는계약]";
+
+    try {
+      assertAnswerBlockGrounded(parseAnswerBlock(`${ANSWER_BLOCK_TAGS.evidence} 사실이 아닙니다. ${forgedMarker}`), [citation]);
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiGroundingError);
+      expect((error as AiGroundingError).groundingReason).toBe(GROUNDING_REASONS.UNKNOWN_CITATION_MARKER);
+    }
+
+    try {
+      assertAnswerBlockGrounded(parseAnswerBlock(`${ANSWER_BLOCK_TAGS.evidence} 표시가 없는 문단입니다.`), [citation]);
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiGroundingError);
+      expect((error as AiGroundingError).groundingReason).toBe(GROUNDING_REASONS.MISSING_REQUIRED_CITATION);
+    }
+
+    // assertAnswerGrounded delegates its OWN per-paragraph check to
+    // parseAnswerBlock()+assertAnswerBlockGrounded() internally (see
+    // citation-required.ts), so an untagged paragraph (defaulting to
+    // "evidence" - parseAnswerBlock's fail-safe default) legitimately
+    // inherits the SAME wired reason through that delegation - this is
+    // not a separate throw site, just the same one reused.
+    try {
+      assertAnswerGrounded("근거 표시가 없는 문단입니다.", [citation]);
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect((error as AiGroundingError).groundingReason).toBe(GROUNDING_REASONS.MISSING_REQUIRED_CITATION);
+    }
+
+    // assertEveryParagraphHasCitation, by contrast, has its OWN fully
+    // independent marker-checking loop (never calls
+    // assertAnswerBlockGrounded) - its throw site is intentionally left
+    // unreasoned (see citation-required.ts's own throw site + this
+    // file's earlier "never a bare Error" test).
+    try {
+      assertEveryParagraphHasCitation("근거 표시가 없는 문단입니다.", [citation]);
+      throw new Error("expected to throw");
+    } catch (error) {
+      expect((error as AiGroundingError).groundingReason).toBeUndefined();
     }
   });
 });

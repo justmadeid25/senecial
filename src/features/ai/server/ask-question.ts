@@ -633,6 +633,13 @@ export async function* askQuestionStreaming(params: {
       // count, or a duration.
       getLogger().warn("ai_stream.failed", {
         errorCode: classified.errorCode,
+        // §Grounding sub-reason telemetry (2026-09-09) - undefined for
+        // every non-grounding failure, and undefined for a grounding
+        // rejection whose throw site had no exact-match reason (see
+        // AiGroundingError's own docstring) - never inferred from
+        // .message, always the literal enum the throw site itself
+        // passed through classifyAiStreamError().
+        groundingReason: classified.groundingReason,
         originalErrorName: classified.originalErrorName,
         isProviderError: classified.isProviderError,
         httpStatus: classified.httpStatus,

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AI_STREAM_ERROR_CODES } from "@/domain/ai/ai-stream-error";
+import { AI_STREAM_ERROR_CODES, GROUNDING_REASONS } from "@/domain/ai/ai-stream-error";
 import type { Citation } from "@/domain/ai/citation";
 import type { AiStreamEvent, LlmCallOptions, LlmCompletionResult, LlmMessage, LlmProvider } from "@/domain/ai/llm-provider";
 import { PROVIDER_ERROR_CODES } from "@/domain/ai/provider-error";
@@ -275,6 +275,66 @@ describe("askQuestionStreaming - error classification (§Production Smoke 2026-0
     expect(usage!.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
   });
 
+  it("A. a valid first block, then a SECOND block with a marker matching no supplied citation, classifies as groundingReason=UNKNOWN_CITATION_MARKER (§Root Cause Phase 2)", async () => {
+    fakeLlm = buildFakeLlm(async function* () {
+      yield { type: "text-delta", text: `[결론] 네, 자동 갱신됩니다.\n\n` };
+      // A syntactically valid marker whose (clauseReference, contractTitle)
+      // pair matches NEITHER of CITATION's - a hallucinated/unknown
+      // reference, not an absent one.
+      yield { type: "text-delta", text: `[근거] 이 조항은 다른 내용입니다. [출처: 제99조 - 존재하지않는계약]\n\n` };
+    });
+    const events = await collectEvents();
+
+    const chunkEvents = events.filter((e) => e.type === "chunk");
+    expect(chunkEvents).toHaveLength(1);
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    expect(events.at(-1)!.type).toBe("error");
+
+    const usage = await findLatestFailedUsageRecord();
+    expect(usage!.success).toBe(false);
+    expect(usage!.operationType).toBe("llm_ask_stream");
+    expect(usage!.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+
+    const failedCalls = loggerWarnSpy.mock.calls.filter(([event]) => event === "ai_stream.failed");
+    const [, payload] = failedCalls.at(-1)!;
+    expect(payload).toMatchObject({
+      errorCode: AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED,
+      groundingReason: GROUNDING_REASONS.UNKNOWN_CITATION_MARKER,
+      chunksEmitted: 1,
+    });
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("존재하지않는계약");
+    expect(serialized).not.toContain("제99조");
+  });
+
+  it("B. a valid first block, then a SECOND evidence block with NO citation marker at all, classifies as groundingReason=MISSING_REQUIRED_CITATION (§Root Cause Phase 2)", async () => {
+    fakeLlm = buildFakeLlm(async function* () {
+      yield { type: "text-delta", text: `[결론] 네, 자동 갱신됩니다.\n\n` };
+      yield { type: "text-delta", text: `[근거] 근거 표시가 전혀 없는 문장입니다.\n\n` };
+    });
+    const events = await collectEvents();
+
+    const chunkEvents = events.filter((e) => e.type === "chunk");
+    expect(chunkEvents).toHaveLength(1);
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    expect(events.at(-1)!.type).toBe("error");
+
+    const usage = await findLatestFailedUsageRecord();
+    expect(usage!.success).toBe(false);
+    expect(usage!.operationType).toBe("llm_ask_stream");
+    expect(usage!.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+
+    const failedCalls = loggerWarnSpy.mock.calls.filter(([event]) => event === "ai_stream.failed");
+    const [, payload] = failedCalls.at(-1)!;
+    expect(payload).toMatchObject({
+      errorCode: AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED,
+      groundingReason: GROUNDING_REASONS.MISSING_REQUIRED_CITATION,
+      chunksEmitted: 1,
+    });
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("근거 표시가 전혀 없는");
+  });
+
   it("4. a genuine ProviderError thrown by the LLM provider preserves ITS OWN provider errorCode unchanged, never overwritten by the grounding/internal classifier", async () => {
     const { ProviderError, PROVIDER_ERROR_CODES: CODES } = await import("@/domain/ai/provider-error");
     fakeLlm = buildFakeLlm(async function* () {
@@ -286,6 +346,10 @@ describe("askQuestionStreaming - error classification (§Production Smoke 2026-0
 
     const usage = await findLatestFailedUsageRecord();
     expect(usage!.errorCode).toBe(PROVIDER_ERROR_CODES.PROVIDER_RATE_LIMITED);
+
+    const failedCalls = loggerWarnSpy.mock.calls.filter(([event]) => event === "ai_stream.failed");
+    const [, payload] = failedCalls.at(-1)!;
+    expect(payload.groundingReason).toBeUndefined();
   });
 
   it("5. a genuinely unexpected, unwrapped exception (not a ProviderError, not our grounding guard) classifies as AI_INTERNAL_ERROR - distinct from BOTH a provider code and AI_GROUNDING_FAILED", async () => {
@@ -306,6 +370,10 @@ describe("askQuestionStreaming - error classification (§Production Smoke 2026-0
     expect(usage!.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_INTERNAL_ERROR);
     expect(usage!.errorCode).not.toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
     expect(usage!.errorCode).not.toBe("PROVIDER_UNKNOWN");
+
+    const failedCalls = loggerWarnSpy.mock.calls.filter(([event]) => event === "ai_stream.failed");
+    const [, payload] = failedCalls.at(-1)!;
+    expect(payload.groundingReason).toBeUndefined();
   });
 
   it("9/10. the safe structured ai_stream.failed log carries only metadata (codes/booleans/counts/durations) and never the generated answer or citation text", async () => {

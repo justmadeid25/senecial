@@ -1,4 +1,4 @@
-import { AiGroundingError } from "./ai-stream-error";
+import { AiGroundingError, GROUNDING_REASONS } from "./ai-stream-error";
 import type { Citation } from "./citation";
 import { findCitationMarkers } from "./citation-marker";
 
@@ -136,10 +136,16 @@ export function assertAnswerBlockGrounded(block: ParsedAnswerBlock, citations: r
   );
   const hasHallucinatedMarker = markers.length > validMarkers.length;
   if (hasHallucinatedMarker) {
-    throw new AiGroundingError(`citation 표시가 실제 제공된 근거와 일치하지 않아 출력을 거부합니다: "${block.text.slice(0, 80)}"`);
+    throw new AiGroundingError(
+      `citation 표시가 실제 제공된 근거와 일치하지 않아 출력을 거부합니다: "${block.text.slice(0, 80)}"`,
+      GROUNDING_REASONS.UNKNOWN_CITATION_MARKER
+    );
   }
   if (block.type === "evidence" && validMarkers.length === 0) {
-    throw new AiGroundingError(`citation 표시가 없는 근거 문단이 있어 출력을 거부합니다: "${block.text.slice(0, 80)}"`);
+    throw new AiGroundingError(
+      `citation 표시가 없는 근거 문단이 있어 출력을 거부합니다: "${block.text.slice(0, 80)}"`,
+      GROUNDING_REASONS.MISSING_REQUIRED_CITATION
+    );
   }
 }
 

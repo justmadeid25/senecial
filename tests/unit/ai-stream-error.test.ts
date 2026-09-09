@@ -4,6 +4,7 @@ import {
   AI_STREAM_ERROR_CODES,
   AiGroundingError,
   classifyAiStreamError,
+  GROUNDING_REASONS,
   safeAiStreamErrorMessage,
 } from "@/domain/ai/ai-stream-error";
 import { PROVIDER_ERROR_CODES, ProviderError } from "@/domain/ai/provider-error";
@@ -97,6 +98,40 @@ describe("classifyAiStreamError (§Production Smoke 2026-09-08 finding)", () => 
 
     const nonError = classifyAiStreamError("plain string");
     expect(nonError.originalErrorName).toBe("string");
+  });
+});
+
+describe("classifyAiStreamError - groundingReason propagation (§Root Cause Phase 2)", () => {
+  it("propagates UNKNOWN_CITATION_MARKER unchanged", () => {
+    const error = new AiGroundingError('citation 표시가 실제 제공된 근거와 일치하지 않아...', GROUNDING_REASONS.UNKNOWN_CITATION_MARKER);
+    const result = classifyAiStreamError(error);
+    expect(result.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+    expect(result.groundingReason).toBe(GROUNDING_REASONS.UNKNOWN_CITATION_MARKER);
+  });
+
+  it("propagates MISSING_REQUIRED_CITATION unchanged", () => {
+    const error = new AiGroundingError('citation 표시가 없는 근거 문단이 있어...', GROUNDING_REASONS.MISSING_REQUIRED_CITATION);
+    const result = classifyAiStreamError(error);
+    expect(result.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+    expect(result.groundingReason).toBe(GROUNDING_REASONS.MISSING_REQUIRED_CITATION);
+  });
+
+  it("an AiGroundingError constructed with no reason (the non-streaming throw sites' current behavior) classifies with groundingReason undefined - never a guessed value", () => {
+    const error = new AiGroundingError("citation 없이는 답변을 검증할 수 없습니다 - ...");
+    const result = classifyAiStreamError(error);
+    expect(result.errorCode).toBe(AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED);
+    expect(result.groundingReason).toBeUndefined();
+  });
+
+  it("groundingReason is undefined for every non-grounding classification (provider, internal, abort, timeout)", () => {
+    expect(
+      classifyAiStreamError(new ProviderError({ errorCode: PROVIDER_ERROR_CODES.PROVIDER_RATE_LIMITED, providerName: "openai" }))
+        .groundingReason
+    ).toBeUndefined();
+    expect(classifyAiStreamError(new TypeError("boom")).groundingReason).toBeUndefined();
+    const abortError = new Error("aborted");
+    abortError.name = "AbortError";
+    expect(classifyAiStreamError(abortError).groundingReason).toBeUndefined();
   });
 });
 

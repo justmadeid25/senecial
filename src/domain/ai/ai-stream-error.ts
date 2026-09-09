@@ -30,6 +30,31 @@ export const AI_STREAM_ERROR_CODES = {
 export type AiStreamErrorCode = (typeof AI_STREAM_ERROR_CODES)[keyof typeof AI_STREAM_ERROR_CODES];
 
 /**
+ * §Grounding sub-reason telemetry (2026-09-09) - a closed vocabulary for
+ * WHICH invariant inside citation-required.ts actually rejected an
+ * answer, derived ONLY from the two throw sites reachable from the real
+ * streaming per-block path (assertAnswerBlockGrounded, used exclusively
+ * by askQuestionStreaming's for-await loop - see that function's own
+ * docstring). The top-level AiUsageRecord.errorCode/client message stay
+ * AI_GROUNDING_FAILED either way; this is additive, safe, enum-only
+ * telemetry layered on top - never a new failure classification, never
+ * anything client-visible.
+ */
+export const GROUNDING_REASONS = {
+  /** A citation marker is present but does not match ANY supplied
+   * citation (assertAnswerBlockGrounded's hasHallucinatedMarker check) -
+   * the model referenced a clause/contract that was never in the
+   * retrieved evidence set, or reproduced a marker's text inexactly. */
+  UNKNOWN_CITATION_MARKER: "UNKNOWN_CITATION_MARKER",
+  /** An evidence-type block (or a fail-safe-default untagged block)
+   * contains zero valid citation markers at all - the model wrote an
+   * evidentiary claim without attaching any source. */
+  MISSING_REQUIRED_CITATION: "MISSING_REQUIRED_CITATION",
+} as const;
+
+export type GroundingReason = (typeof GROUNDING_REASONS)[keyof typeof GROUNDING_REASONS];
+
+/**
  * Fixed, safe user-facing/loggable text per code - never provider text,
  * and never the grounding guard's own internal debug message (which may
  * echo a short snippet of generated answer/citation text - fine for an
@@ -54,13 +79,22 @@ export function safeAiStreamErrorMessage(code: AiStreamErrorCode): string {
  * generated text) for in-process debugging ONLY - never log or expose it;
  * use safeAiStreamErrorMessage(AI_GROUNDING_FAILED) for anything
  * client-facing or logged.
+ *
+ * `groundingReason` is OPTIONAL and deliberately narrow: only a throw
+ * site whose invariant exactly matches one of GROUNDING_REASONS' two
+ * values sets it. A throw site with no exact match (e.g. "zero
+ * citations were supplied at all", "the assembled answer was empty") is
+ * left undefined rather than forced into a misleading category - see
+ * each call site in citation-required.ts for which case applies.
  */
 export class AiGroundingError extends Error {
   readonly errorCode = AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED;
+  readonly groundingReason?: GroundingReason;
 
-  constructor(message: string) {
+  constructor(message: string, groundingReason?: GroundingReason) {
     super(message);
     this.name = "AiGroundingError";
+    this.groundingReason = groundingReason;
   }
 }
 
@@ -70,6 +104,8 @@ export interface ClassifiedAiStreamError {
   httpStatus?: number;
   /** Safe to log - a class/type name only, never the exception's own message (which may echo generated text for a grounding rejection, or provider-supplied text for a raw provider exception). */
   originalErrorName: string;
+  /** Only ever set when errorCode===AI_GROUNDING_FAILED and the throw site had an exact-match reason (see AiGroundingError's own docstring) - undefined for every other error, and undefined for a grounding rejection whose throw site had no exact-match reason. */
+  groundingReason?: GroundingReason;
 }
 
 /**
@@ -94,7 +130,12 @@ export function classifyAiStreamError(rawError: unknown): ClassifiedAiStreamErro
   const originalErrorName = rawError instanceof Error ? rawError.name : typeof rawError;
 
   if (rawError instanceof AiGroundingError) {
-    return { errorCode: AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED, isProviderError: false, originalErrorName };
+    return {
+      errorCode: AI_STREAM_ERROR_CODES.AI_GROUNDING_FAILED,
+      isProviderError: false,
+      originalErrorName,
+      groundingReason: rawError.groundingReason,
+    };
   }
   if (rawError instanceof ProviderError) {
     return { errorCode: rawError.errorCode, isProviderError: true, httpStatus: rawError.httpStatus, originalErrorName };
