@@ -1624,3 +1624,114 @@ enum FeedbackCategory {
   CITATION_SEEMS_WRONG
   OTHER
 }
+
+/**
+ * §Phase L1 - Legal Intelligence Phase 1. Tier A official sources only
+ * (see docs/operations/legal-intelligence.md's source-of-truth hierarchy) -
+ * currently always LAW_OPEN_DATA (국가법령정보 공동활용). Global/shared, NOT
+ * organization-scoped: a statute or Supreme Court precedent is the same
+ * official record for every tenant, unlike ClauseEmbedding/MessageCitation
+ * which are per-organization contract evidence.
+ */
+enum LegalSourceType {
+  STATUTE
+  PRECEDENT
+  INTERPRETATION
+}
+
+enum LegalAuthority {
+  LAW_OPEN_DATA
+}
+
+enum LegalVerificationStatus {
+  VERIFIED_OFFICIAL
+  UNVERIFIED
+}
+
+/**
+ * The durable lazy cache for verified legal evidence (§6 - "Prefer durable
+ * DB cache over Redis-only cache for verified legal evidence"). One row per
+ * (authority, sourceType, externalId, articleId) - see
+ * domain/legal/legal-source.ts's buildLegalSourceIdentityKey(), the ONLY
+ * function allowed to construct `identityKey`. Never keyed by
+ * title/citationLabel/lawName/caseNumber (§2 - "Do not use display text as
+ * source identity").
+ *
+ * A row may exist with verificationStatus=UNVERIFIED (e.g. a normalization
+ * that failed required-metadata checks) - it is still cached to avoid
+ * repeatedly re-fetching a known-bad response, but MUST NOT be treated as
+ * authoritative legal grounding by any consumer (§5/§9) - see
+ * legal-source-verification.ts's isVerifiedOfficial().
+ */
+model LegalSource {
+  id                 String                   @id @default(cuid())
+  sourceType         LegalSourceType
+  authority          LegalAuthority           @default(LAW_OPEN_DATA)
+  verificationStatus LegalVerificationStatus  @default(UNVERIFIED)
+  externalId         String
+  /** Statute article/sub-unit identifier (e.g. "398-2"), or null for a whole-source row (a full precedent, or a full un-split law body) - see LegalSourceIdentity.articleId. */
+  articleId          String?
+  /** buildLegalSourceIdentityKey(identity) - the ONLY stable identity; unique below. */
+  identityKey        String                   @unique
+
+  title         String
+  /** Server-rendered display citation (e.g. "민법 제398조 제2항", "대법원 2020다12345, 2021.03.11.") - never model-authored (§9). */
+  citationLabel String
+  sourceUrl     String?
+
+  lawName       String?
+  articleNumber String?
+  articleTitle  String?
+
+  court        String?
+  /** §5 - preserved EXACTLY as returned by the official source; the application layer must never write an LLM-normalized value here. */
+  caseNumber   String?
+  caseType     String?
+
+  effectiveDate DateTime?
+  decisionDate  DateTime?
+
+  /** Full official body text (a single statute article, or a full precedent) - see fragments for article-level pinpoint sub-units. */
+  content     String   @db.Text
+  contentHash String
+  /** Provider-shaped extras not promoted to a first-class column (ministry, promulgation date, holding summary, ...) - display/debugging only, never used for identity or verification (§2). */
+  metadata    Json?
+
+  retrievedAt DateTime
+  /** Bumped whenever a refetch's contentHash differs from the stored one (§6 - "contentHash changes" revalidation signal) - a coarse superseded-version counter; full revision history is a future phase. */
+  revision    Int      @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fragments LegalSourceFragment[]
+
+  @@index([sourceType, externalId])
+  @@index([verificationStatus])
+  @@map("legal_sources")
+}
+
+/**
+ * §3/§8 - article-level (statute) pinpoint sub-units of a LegalSource, one
+ * row per official article in fetch order. Replaced wholesale (not
+ * versioned in place) on refetch, mirroring how ContractDocumentChunk
+ * re-chunking already works in this codebase - see
+ * features/legal/server/get-or-fetch-statute.ts.
+ */
+model LegalSourceFragment {
+  id            String  @id @default(cuid())
+  legalSourceId String
+  fragmentIndex Int
+  /** e.g. "제398조의2(...)" - see domain/legal/normalize-statute.ts's buildArticleLabel(). Null only if the upstream API reported no article number at all for this unit. */
+  label         String?
+  content       String  @db.Text
+  startOffset   Int?
+  endOffset     Int?
+
+  createdAt DateTime @default(now())
+
+  legalSource LegalSource @relation(fields: [legalSourceId], references: [id], onDelete: Cascade)
+
+  @@unique([legalSourceId, fragmentIndex])
+  @@map("legal_source_fragments")
+}

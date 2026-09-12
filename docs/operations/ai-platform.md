@@ -219,4 +219,4 @@ process-global singleton `getEmbeddingProvider()`/`getLlmProvider()`는 "primary
 - Nightly/정기 실 provider 회귀 실행은 아직 구성되지 않았습니다 - 지금까지의 실측은 모두 수동 1회성 실행입니다.
 - Shadow mode 실제 sampled 실행은 아직 한 적이 없습니다(기본 OFF 유지).
 
-관련 문서: [monitoring.md](./monitoring.md), [security.md](./security.md), [backup.md](./backup.md)
+관련 문서: [monitoring.md](./monitoring.md), [security.md](./security.md), [backup.md](./backup.md), [legal-intelligence.md](./legal-intelligence.md) (Phase L1 - 국가법령정보 공동활용 연동, 이 문서와 완전히 독립된 provider/cache 스택)
