@@ -5,9 +5,11 @@ import {
   parseRetriesEnv,
   parseTimeoutMsEnv,
 } from "@/domain/legal";
+import { resolveLegalGatewayConfig } from "@/lib/config/legal-gateway";
 
 import { DeterministicDevelopmentLawOpenDataProvider } from "./deterministic-development-law-open-data-provider";
 import { LawOpenDataHttpProvider } from "./providers/law-open-data-http-provider";
+import { LawOpenDataGatewayClientProvider } from "./providers/law-open-data-gateway-client-provider";
 
 let cachedProvider: LawOpenDataProvider | undefined;
 
@@ -41,6 +43,16 @@ function requireEnv(name: string): string {
  * ("law-open-data", set in law-open-data-http-provider.ts), so this
  * provider's health can never be conflated with an LLM/embedding
  * provider's health.
+ *
+ * §Phase L1.3 - `LAW_OPEN_DATA_PROVIDER=gateway` is a third driver: it
+ * never touches LAW_OPEN_DATA_OC or law.go.kr directly, instead relaying
+ * every call to a dedicated Legal Gateway service (scripts/
+ * legal-gateway-server.ts, itself an `http` driver instance) over HTTPS -
+ * see docs/operations/legal-intelligence.md's architecture section. This
+ * is what production is intended to use once the gateway is provisioned,
+ * but selecting it here is not itself a production switch - NOT wired as
+ * any environment's default in this phase (see that doc's rollout
+ * sequence).
  */
 export function getLawOpenDataProvider(): LawOpenDataProvider {
   if (cachedProvider) {
@@ -58,6 +70,11 @@ export function getLawOpenDataProvider(): LawOpenDataProvider {
       );
     }
     cachedProvider = new DeterministicDevelopmentLawOpenDataProvider();
+    return cachedProvider;
+  }
+
+  if (driver === "gateway") {
+    cachedProvider = new LawOpenDataGatewayClientProvider(resolveLegalGatewayConfig());
     return cachedProvider;
   }
 

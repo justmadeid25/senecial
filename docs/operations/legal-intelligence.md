@@ -141,6 +141,114 @@ consumer - see `isVerifiedOfficial()`.
   regardless of driver/credential (`legal-provider-call-guard.ts`) unless a
   test explicitly sets `TEST_REAL_LEGAL_PROVIDER=true` - no test in this
   repository does, by design (§Testing below).
+- `LAW_OPEN_DATA_PROVIDER=gateway` (Phase L1.3, see §Legal Gateway
+  architecture below) never reads `LAW_OPEN_DATA_OC` at all - it reads
+  `LEGAL_GATEWAY_URL`/`LEGAL_GATEWAY_SHARED_SECRET` instead
+  (`src/lib/config/legal-gateway.ts`) and relays every call to the Legal
+  Gateway service, which is the only process meant to ever hold the real
+  OC in production.
+
+## Legal Gateway architecture (Phase L1.2/L1.3)
+
+L1.1's live retry (see §Manual probe below) confirmed the blocker is
+network identity, not the request contract or the OC itself: law.go.kr
+rejects calls with `사용자 정보 검증에 실패하였습니다.` / "register the exact
+server IP address and domain" until the calling server's IP is registered
+on the portal. Local/Vercel egress IPs are not stable, so no amount of
+request-shape fixing resolves this - the fix is infrastructure, not code.
+
+**Target architecture (designed in L1.2, scaffolded in code in L1.3 -
+NOT YET PROVISIONED OR WIRED):**
+
+```
+Vercel (Next.js app)
+   │  HTTPS, Authorization: Bearer <LEGAL_GATEWAY_SHARED_SECRET>
+   ▼
+Legal Gateway - dedicated Railway service (Dockerfile.legal-gateway /
+scripts/legal-gateway-server.ts), the ONLY process that holds
+LAW_OPEN_DATA_OC and calls law.go.kr directly
+   │  Static Outbound IP (Railway service-level setting)
+   ▼
+law.go.kr (국가법령정보 공동활용 OPEN API)
+```
+
+Chosen over reusing the existing worker service (Dockerfile.worker)
+because Static Outbound IP is a whole-**service** setting on Railway -
+enabling it on the worker would make every one of the worker's *other*
+outbound calls (OpenAI, Perplexity, R2, Postmark, Neon) static too, an
+unrelated blast-radius increase. A dedicated service also matches this
+repo's own existing precedent: `senecial-scanner`
+(`Dockerfile.scanner` / `scripts/malware-scanner-server.ts` /
+`clamav-http-file-malware-scanner.ts`) already solves the identical shape
+of problem (Vercel needs a capability that can't/shouldn't live in the
+Vercel runtime) the same way - a small dedicated Railway service reached
+over public HTTPS with a shared bearer secret. The Legal Gateway mirrors
+that pattern directly rather than inventing a new one.
+
+**Credential/secret placement (production, once provisioned):**
+
+| Variable | Lives on |
+|---|---|
+| `LAW_OPEN_DATA_OC` | **Legal Gateway only.** Never on Vercel. |
+| `LEGAL_GATEWAY_SHARED_SECRET` | Legal Gateway **and** Vercel (same value). |
+| `LEGAL_GATEWAY_URL` | Vercel only (the gateway's public HTTPS URL). |
+
+**API surface** - `createLegalGatewayServer()`
+(`src/server/services/legal/legal-gateway-server.ts`) exposes exactly:
+
+- `GET /health` - unauthenticated, cheap, never calls law.go.kr.
+- `POST /legal/statutes/search`
+- `POST /legal/statutes/:id`
+- `POST /legal/precedents/search`
+- `POST /legal/precedents/:id`
+
+One typed route per `LawOpenDataProvider` method - **never** a generic
+`GET /proxy?url=...` or any route that accepts a caller-supplied
+url/host/hostname/protocol/pathname to forward. Every `/legal/*` route
+requires the bearer secret (constant-time compare,
+`legal-gateway-auth.ts`); a wrong/missing/malformed secret always gets the
+same generic `LEGAL_PROVIDER_AUTH_FAILED` envelope - it never reveals
+which check failed. The gateway does **no** parsing/normalization of its
+own: server-side it just runs the existing `LawOpenDataHttpProvider`
+and relays its typed result as JSON; client-side
+(`law-open-data-gateway-client-provider.ts`, a new
+`LawOpenDataProvider` implementation selected via
+`LAW_OPEN_DATA_PROVIDER=gateway`) just decodes that envelope and
+reconstructs the same closed `LegalProviderErrorCode` vocabulary - see
+§Error model. This keeps exactly one place (the existing HTTP provider)
+owning the raw-Korean-field -> DTO mapping.
+
+**Current status - explicitly NOT done yet:**
+
+- Static Outbound IP is **not enabled** on any Railway service (confirmed
+  via `railway outbound-network static-ip status` during the L1.2 audit -
+  `enabled: false` on both existing services).
+- The Legal Gateway Railway service itself has **not been created**.
+- No IP/domain has been registered on the law.go.kr portal for this
+  purpose.
+- `LAW_OPEN_DATA_PROVIDER` is **not** set to `gateway` anywhere in
+  production - the existing `development`/`http` defaults are untouched.
+- Live law.go.kr verification remains **blocked** until the above is
+  provisioned and the resulting static IP is registered and propagates.
+
+**Rollout sequence (documented, not executed by this phase):**
+
+1. Create the Railway service from `Dockerfile.legal-gateway`; set
+   `LAW_OPEN_DATA_OC` + `LEGAL_GATEWAY_SHARED_SECRET` there only.
+2. Deploy; verify `GET /health`.
+3. Enable Static Outbound IP on that service only (non-HA, i.e. a single
+   IP - keeps the law.go.kr registration surface minimal); redeploy
+   (Railway requires a redeploy for the IP change to take outbound
+   effect).
+4. Read back the assigned IP via `railway outbound-network static-ip
+   status --json`.
+5. Register that IP + the approved domain on the 국가법령정보 공동활용
+   portal; wait for approval/propagation.
+6. Re-run the L1.1-style live probe **from inside the gateway's own
+   environment** first, to isolate "is the IP whitelisted" from "does the
+   gateway plumbing work."
+7. Only then set `LEGAL_GATEWAY_URL` + `LEGAL_GATEWAY_SHARED_SECRET` on
+   Vercel and switch `LAW_OPEN_DATA_PROVIDER=gateway` there.
 
 ## Error model
 
@@ -224,6 +332,12 @@ access is confirmed working, and reconcile any further drift found there.
 
 ## Future work
 
+- **Legal Gateway provisioning (L1.2 design complete, L1.3 code complete,
+  infrastructure not yet approved)**: create the Railway service, enable
+  Static Outbound IP, register it on the law.go.kr portal, and switch
+  production to `LAW_OPEN_DATA_PROVIDER=gateway` - see §Legal Gateway
+  architecture above for the full rollout sequence. This is the
+  prerequisite for ever completing the §Manual probe below.
 - **L2 - Legal Pinpointer + Fact Checker**: `domain/legal/legal-pinpointer.ts`
   is scaffolded (typed interface only, no implementation) - narrows a
   VERIFIED `LegalSource`/fragment down to the specific 항/호 or judgment

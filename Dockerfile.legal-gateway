@@ -1,0 +1,71 @@
+# Senecial - Legal Gateway image (§Phase L1.2/L1.3 - dedicated Railway
+# service, the ONLY process authorized to hold LAW_OPEN_DATA_OC and call
+# law.go.kr directly).
+#
+# Companion to Dockerfile.worker/Dockerfile.scanner (the production Next.js
+# web app is deployed to Vercel - NOT built from this file, see the root
+# Dockerfile's own comment). Reached only by the Vercel web app's
+# law-open-data-gateway-client-provider.ts over HTTPS with a shared-secret
+# bearer token - see docs/operations/legal-intelligence.md's architecture
+# section for the full rationale (why a dedicated service rather than
+# reusing the worker: Static Outbound IP is a whole-SERVICE setting, so
+# enabling it on the worker would make every one of the worker's other
+# outbound calls - OpenAI, Perplexity, R2, Postmark, Neon - static too, an
+# unrelated blast-radius increase this avoids entirely).
+#
+# This image never runs `next build`/`next start` (mirrors Dockerfile.worker)
+# and never runs a system daemon (unlike Dockerfile.scanner's clamd) - it
+# only executes scripts/legal-gateway-server.ts via tsx, which imports
+# directly from `src/` and needs the full source + devDependencies (tsx),
+# never compiled Next.js output.
+#
+# `deps` stage copies prisma.config.ts + prisma/schema.prisma before
+# `pnpm install` for the same reason as Dockerfile.worker's identical
+# step: package.json's `postinstall: prisma generate` runs DURING
+# `pnpm install` itself, and Prisma 7's config-file-based CLI needs both
+# present to resolve the schema even though nothing this image actually
+# runs touches Prisma/the database at runtime (LawOpenDataHttpProvider and
+# everything scripts/legal-gateway-server.ts imports never open a DB
+# connection) - omitting them fails the build, not a runtime need.
+#
+# Invokes tsx's CLI script directly under `node` (not `pnpm run ...`) so
+# `node` itself is PID 1 and actually receives SIGTERM - see
+# Dockerfile.worker's own comment for the confirmed `docker stop` finding
+# this avoids (pnpm/npm as PID 1 does not forward SIGTERM to its child).
+
+FROM node:22-bookworm-slim AS base
+RUN corepack enable
+
+# ---------------------------------------------------------------------------
+FROM base AS deps
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml prisma.config.ts ./
+COPY prisma/schema.prisma ./prisma/schema.prisma
+RUN pnpm install --frozen-lockfile
+
+# ---------------------------------------------------------------------------
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# DATABASE_URL is not required for `prisma generate` (it only reads
+# prisma/schema.prisma) - no real secret is ever baked into this image.
+RUN pnpm exec prisma generate
+
+# ---------------------------------------------------------------------------
+FROM base AS legal-gateway
+WORKDIR /app
+
+ARG GIT_COMMIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+ENV BUILD_DATE=${BUILD_DATE}
+ENV NODE_ENV=production
+
+COPY --from=builder --chown=node:node /app /app
+
+USER node
+
+EXPOSE 8080
+
+CMD ["node", "node_modules/tsx/dist/cli.mjs", "scripts/legal-gateway-server.ts"]
