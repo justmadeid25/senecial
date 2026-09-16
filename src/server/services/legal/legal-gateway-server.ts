@@ -13,9 +13,6 @@ import {
 } from "@/domain/legal";
 
 import { isAuthorizedBearer } from "./legal-gateway-auth";
-// TEMPORARY - Phase L1.4 diagnostic only, see that file's own docstring.
-// REMOVE this import and the route below once the probe result is captured.
-import { runMinimalRequestDiagnosticProbe } from "./minimal-request-diagnostic-probe";
 
 export interface LegalGatewayServerDependencies {
   /** The real LawOpenDataHttpProvider in production; any LawOpenDataProvider (a fake, in tests) is accepted - see this file's own docstring. */
@@ -309,13 +306,6 @@ export function createLegalGatewayServer(deps: LegalGatewayServerDependencies): 
         deps.provider.fetchPrecedentBody(officialPrecedentId, { abortSignal: signal })
       );
       sendSuccess(res, result);
-    },
-    // TEMPORARY - Phase L1.4 diagnostic only (see minimal-request-diagnostic-probe.ts).
-    // No caller-supplied params - a fixed, hardcoded, single-purpose probe.
-    // REMOVE once the probe result is captured.
-    "POST /diagnostics/minimal-request-probe": async ({ res }) => {
-      const result = await runMinimalRequestDiagnosticProbe();
-      sendJson(res, 200, { ok: true, result });
     },
   };
 
