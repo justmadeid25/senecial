@@ -268,4 +268,167 @@ describe("LawOpenDataHttpProvider (Phase L1 §1 - isolated official API adapter)
     await expect(provider.searchStatutes("   ")).rejects.toMatchObject({ errorCode: "LEGAL_PROVIDER_INVALID_REQUEST" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  describe("legal_provider.upstream_error_envelope diagnostic logging (Phase L1.4)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("logs the safe Korean result/msg to the structured diagnostic log, with providerName/operation/errorCode metadata", async () => {
+      const { getLogger } = await import("@/server/logging");
+      const warnSpy = vi.spyOn(getLogger(), "warn");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                result: "사용자 정보 검증에 실패하였습니다.",
+                msg: "OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.",
+              }),
+              { status: 200, headers: { "Content-Type": "application/json;charset=UTF-8" } }
+            )
+        )
+      );
+      const provider = makeProvider();
+      await expect(provider.searchStatutes("민법")).rejects.toMatchObject({ errorCode: "LEGAL_PROVIDER_AUTH_FAILED" });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        "legal_provider.upstream_error_envelope",
+        expect.objectContaining({
+          providerName: "law-open-data",
+          operation: "search",
+          errorCode: "LEGAL_PROVIDER_AUTH_FAILED",
+          result: "사용자 정보 검증에 실패하였습니다.",
+          msg: "OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.",
+        })
+      );
+    });
+
+    it("redacts an email-shaped substring inside msg before logging", async () => {
+      const { getLogger } = await import("@/server/logging");
+      const warnSpy = vi.spyOn(getLogger(), "warn");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({ result: "사용자 검증 실패", msg: "등록된 계정 test.user@example.com 을 확인해 주세요" }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            )
+        )
+      );
+      await expect(makeProvider().searchStatutes("민법")).rejects.toBeDefined();
+
+      const call = warnSpy.mock.calls.find((c) => c[0] === "legal_provider.upstream_error_envelope");
+      expect(call).toBeDefined();
+      const loggedMsg = (call![1] as Record<string, unknown>).msg as string;
+      expect(loggedMsg).not.toContain("test.user@example.com");
+      expect(loggedMsg).toContain("[REDACTED]");
+    });
+
+    it("redacts a long alphanumeric/token-shaped substring inside msg before logging (defense-in-depth against an OC-like value)", async () => {
+      const { getLogger } = await import("@/server/logging");
+      const warnSpy = vi.spyOn(getLogger(), "warn");
+      const tokenLikeValue = "AbCdEfGh12345678ZzYy";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(JSON.stringify({ result: "사용자 검증 실패", msg: `인증키 ${tokenLikeValue} 를 확인해 주세요` }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+        )
+      );
+      await expect(makeProvider().searchStatutes("민법")).rejects.toBeDefined();
+
+      const call = warnSpy.mock.calls.find((c) => c[0] === "legal_provider.upstream_error_envelope");
+      const loggedMsg = (call![1] as Record<string, unknown>).msg as string;
+      expect(loggedMsg).not.toContain(tokenLikeValue);
+      expect(loggedMsg).toContain("[REDACTED]");
+    });
+
+    it("sanitizes control characters (CR/LF/tab) inside result/msg before logging", async () => {
+      const { getLogger } = await import("@/server/logging");
+      const warnSpy = vi.spyOn(getLogger(), "warn");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(JSON.stringify({ result: "사용자\r\n검증\t실패", msg: "IP\r\n등록\t필요" }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+        )
+      );
+      await expect(makeProvider().searchStatutes("민법")).rejects.toBeDefined();
+
+      const call = warnSpy.mock.calls.find((c) => c[0] === "legal_provider.upstream_error_envelope");
+      const data = call![1] as Record<string, unknown>;
+      expect(data.result).not.toMatch(/[\r\n\t]/);
+      expect(data.msg).not.toMatch(/[\r\n\t]/);
+    });
+
+    it("truncates an oversized msg before logging", async () => {
+      const { getLogger } = await import("@/server/logging");
+      const warnSpy = vi.spyOn(getLogger(), "warn");
+      const oversizedMsg = `사용자 인증 실패 ${"가".repeat(500)}`;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(JSON.stringify({ result: "사용자 검증 실패", msg: oversizedMsg }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+        )
+      );
+      await expect(makeProvider().searchStatutes("민법")).rejects.toBeDefined();
+
+      const call = warnSpy.mock.calls.find((c) => c[0] === "legal_provider.upstream_error_envelope");
+      const loggedMsg = (call![1] as Record<string, unknown>).msg as string;
+      expect(loggedMsg.length).toBeLessThan(oversizedMsg.length);
+      expect(loggedMsg.length).toBeLessThanOrEqual(201); // 200 chars + ellipsis
+    });
+
+    it("never includes the upstream result/msg in the thrown LegalProviderError (client-facing contract unchanged)", async () => {
+      const rawMsg = "OPEN API 호출 시 사용자 검증을 위하여 정확한 서버장비의 IP주소 및 도메인주소를 등록해 주세요.";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(JSON.stringify({ result: "사용자 정보 검증에 실패하였습니다.", msg: rawMsg }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+        )
+      );
+      const provider = makeProvider();
+      let caught: unknown;
+      try {
+        await provider.searchStatutes("민법");
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const err = caught as Error & { errorCode?: string; result?: unknown; msg?: unknown };
+      expect(err.errorCode).toBe("LEGAL_PROVIDER_AUTH_FAILED");
+      expect(err.message).not.toBe(rawMsg);
+      expect(err.message).not.toContain(rawMsg);
+      expect(err.result).toBeUndefined();
+      expect(err.msg).toBeUndefined();
+    });
+
+    it("does not log anything extra on a successful response", async () => {
+      const { getLogger } = await import("@/server/logging");
+      const warnSpy = vi.spyOn(getLogger(), "warn");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => jsonResponse({ LawSearch: { law: { 법령ID: "001234", 법령명한글: "민법" } } }))
+      );
+      await makeProvider().searchStatutes("민법");
+      expect(warnSpy).not.toHaveBeenCalledWith("legal_provider.upstream_error_envelope", expect.anything());
+    });
+  });
 });

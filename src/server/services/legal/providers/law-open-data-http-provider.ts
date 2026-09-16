@@ -1,4 +1,5 @@
 import type { CircuitBreaker } from "@/domain/ai/circuit-breaker";
+import { getLogger } from "@/server/logging";
 import {
   classifyLegalProviderHttpStatus,
   LEGAL_PROVIDER_ERROR_CODES,
@@ -117,6 +118,39 @@ interface RawPrecServiceResponse {
   };
 }
 
+const DIAGNOSTIC_FIELD_MAX_LENGTH = 200;
+const REDACTED_PLACEHOLDER = "[REDACTED]";
+
+/**
+ * §Phase L1.4 diagnostic patch - sanitizes the upstream `result`/`msg`
+ * strings from a RECOGNIZED law.go.kr error envelope (see
+ * rejectIfErrorEnvelope() below) before they are ever written to a
+ * structured log line. These are normally short, generic guidance
+ * sentences (e.g. "OPEN API 호출 시 사용자 검증을 위하여...") with no
+ * legitimate reason to contain a credential - this is defense-in-depth
+ * against upstream text unexpectedly echoing something token/OC-shaped,
+ * not the primary control. The primary control is narrower still: this
+ * codebase's own OC, the request URL (which embeds OC as a query
+ * parameter), and every header are never passed into this function, or
+ * logged anywhere in this file, at all - only these two upstream-supplied
+ * fields ever reach it.
+ */
+function sanitizeUpstreamDiagnosticField(value: string): string {
+  const withoutControlChars = value.replace(/[\r\n\t\x00-\x1F\x7F]/g, " ");
+  const withoutEmails = withoutControlChars.replace(
+    /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
+    REDACTED_PLACEHOLDER
+  );
+  // Any long alphanumeric/underscore/hyphen run is treated as
+  // potentially credential/token-shaped (an OC value, an API key, ...)
+  // and redacted - ordinary Korean/English guidance prose never contains
+  // a run this long.
+  const withoutLongTokens = withoutEmails.replace(/[A-Za-z0-9_-]{16,}/g, REDACTED_PLACEHOLDER);
+  return withoutLongTokens.length > DIAGNOSTIC_FIELD_MAX_LENGTH
+    ? `${withoutLongTokens.slice(0, DIAGNOSTIC_FIELD_MAX_LENGTH)}…`
+    : withoutLongTokens;
+}
+
 function asArray<T>(value: T | T[] | undefined): T[] {
   if (value === undefined) return [];
   return Array.isArray(value) ? value : [value];
@@ -166,7 +200,7 @@ export class LawOpenDataHttpProvider implements LawOpenDataProvider {
   }
 
   /** §0 - "bounded response size" / "explicit content type parsing" / "malformed-response rejection." Never JSON.parse()s a response whose Content-Type is not JSON-shaped, or whose body exceeds LAW_OPEN_DATA_MAX_RESPONSE_BYTES. */
-  private async readBoundedJson<T>(response: Response): Promise<T> {
+  private async readBoundedJson<T>(response: Response, operation: "search" | "fetch"): Promise<T> {
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("json") && !contentType.includes("text")) {
       throw new LegalProviderError({
@@ -201,7 +235,7 @@ export class LawOpenDataHttpProvider implements LawOpenDataProvider {
         cause: parseError,
       });
     }
-    this.rejectIfErrorEnvelope(parsed);
+    this.rejectIfErrorEnvelope(parsed, operation);
     return parsed as T;
   }
 
@@ -220,7 +254,7 @@ export class LawOpenDataHttpProvider implements LawOpenDataProvider {
    * any per-endpoint parsing, for every call, so that failure mode can
    * never happen again for any of the four call types.
    */
-  private rejectIfErrorEnvelope(body: unknown): void {
+  private rejectIfErrorEnvelope(body: unknown, operation: "search" | "fetch"): void {
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return;
     }
@@ -229,12 +263,24 @@ export class LawOpenDataHttpProvider implements LawOpenDataProvider {
       return;
     }
     const isUserOrAccessIssue = /사용자|OC|IP|도메인|인증/.test(record.msg);
-    throw new LegalProviderError({
-      errorCode: isUserOrAccessIssue
-        ? LEGAL_PROVIDER_ERROR_CODES.LEGAL_PROVIDER_AUTH_FAILED
-        : LEGAL_PROVIDER_ERROR_CODES.LEGAL_PROVIDER_INVALID_REQUEST,
+    const errorCode = isUserOrAccessIssue
+      ? LEGAL_PROVIDER_ERROR_CODES.LEGAL_PROVIDER_AUTH_FAILED
+      : LEGAL_PROVIDER_ERROR_CODES.LEGAL_PROVIDER_INVALID_REQUEST;
+
+    // §Phase L1.4 diagnostic patch - server-side ONLY. Never reaches the
+    // gateway's HTTP response (LegalProviderError below carries no
+    // result/msg field, only errorCode - see legal-gateway-server.ts's
+    // sendError(), which serializes error.errorCode/error.message, where
+    // message is LegalProviderError's own FIXED safe string, never this).
+    getLogger().warn("legal_provider.upstream_error_envelope", {
       providerName: this.providerName,
+      operation,
+      errorCode,
+      result: sanitizeUpstreamDiagnosticField(record.result),
+      msg: sanitizeUpstreamDiagnosticField(record.msg),
     });
+
+    throw new LegalProviderError({ errorCode, providerName: this.providerName });
   }
 
   private async callApi<T>(
@@ -261,7 +307,7 @@ export class LawOpenDataHttpProvider implements LawOpenDataProvider {
             httpStatus: response.status,
           });
         }
-        return this.readBoundedJson<T>(response);
+        return this.readBoundedJson<T>(response, operation);
       },
     });
   }
